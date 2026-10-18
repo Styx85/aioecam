@@ -4,19 +4,20 @@ build-backend = "hatchling.build"
 
 [project]
 name = "aioecam"
-version = "0.1.0.dev0"
+version = "0.1.0b1"
 description = "Async local-first client for De'Longhi ECAM coffee machines (Coffee Link / Ayla LAN mode)"
 readme = "README.md"
 license = "AGPL-3.0-or-later"
 license-files = ["LICENSE"]
 authors = [{ name = "Christoph Berliner" }]
+keywords = ["delonghi", "coffee", "ecam", "ayla", "home-assistant", "asyncio"]
 requires-python = ">=3.13"
 dependencies = [
     "aiohttp>=3.11",
     "cryptography>=44",
 ]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 4 - Beta",
     "Framework :: AsyncIO",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
@@ -34,6 +35,8 @@ dev = [
 
 [project.urls]
 Source = "https://github.com/Styx85/aioecam"
+Issues = "https://github.com/Styx85/aioecam/issues"
+"Protocol notes" = "https://github.com/Styx85/cremalink-ha/blob/main/docs/ecam-lan-protocol.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/aioecam"]
