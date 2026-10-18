@@ -15,7 +15,7 @@ from aioecam.ecam.frame import RESPONSE, Frame
 from aioecam.ecam.monitor import MachineState
 from aioecam.ecam.profile import load_profile
 from aioecam.ecam.value import decode_value, encode_value
-from aioecam.exceptions import CommandRejected, CommandTimeout
+from aioecam.exceptions import CommandRejected, CommandTimeout, FrameError
 from aioecam.lan.server import LanServer
 from tests.fake_cloud import FakeCloud
 from tests.fake_device import FakeDevice
@@ -457,3 +457,39 @@ async def eventually_true(check: Any, timeout: float = 3.0) -> None:
     async with asyncio.timeout(timeout):
         while not check():  # noqa: ASYNC110 - test helper
             await asyncio.sleep(0.02)
+
+
+async def test_passive_diagnostics_identical_monitor_and_no_writes(
+    rig: tuple[EcamDevice, FakeMachine],
+) -> None:
+    ecam, machine = rig
+    await ecam.refresh()
+    before = ecam.last_monitor_at
+    seen = []
+    ecam.subscribe(seen.append)
+    await asyncio.sleep(0.01)
+    await ecam.refresh()
+    assert ecam.last_monitor_at > before
+    assert seen == []  # fresh receipt, unchanged contents
+    assert ecam.monitor_query_result == "response_received"
+    count = len(machine.received)
+    await machine.device.push(
+        "arbitrary_recipe_name",
+        encode_value(Frame(RESPONSE, 0xA6, 0xF0, bytes.fromhex("01 01 01 0028"))),
+    )
+    assert ecam.catalog.snapshot()["entries"][0]["data"]["parameters"] == {1: 40}
+    assert len(machine.received) == count  # observation never sends a command
+    original_value = machine.device.properties[ecam.profile.monitor_property]
+    valid_at = ecam.last_monitor_at
+    machine.device.properties[ecam.profile.monitor_property] = "not a monitor"
+    with pytest.raises(FrameError):
+        await ecam.refresh()
+    assert ecam.monitor_query_result == "failed"
+    assert ecam.monitor_query_error == "FrameError"
+    assert ecam.last_monitor_at == valid_at
+    assert ecam.last_monitor_error_at is not None
+    machine.device.properties[ecam.profile.monitor_property] = original_value
+    await ecam.refresh()
+    assert ecam.monitor_query_result == "response_received"
+    assert ecam.monitor_query_error is None
+    assert ecam.last_monitor_error == "FrameError"  # retained after recovery

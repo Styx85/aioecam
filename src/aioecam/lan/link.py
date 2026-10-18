@@ -60,6 +60,7 @@ class LinkStats:
     last_registration_status: int | None = None
     last_key_exchange: float | None = None
     last_contact: float | None = None
+    last_datapoint: float | None = None
 
 
 @dataclass
@@ -250,6 +251,7 @@ class LanLink:
         if point is None:
             _LOGGER.debug("%s: ignoring datapoint without name", self.device_ip)
             return
+        self.stats.last_datapoint = time.time()
         for fut in self._waiters.pop(point.name, []):
             if not fut.done():
                 fut.set_result(point)

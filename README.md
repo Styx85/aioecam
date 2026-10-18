@@ -63,3 +63,22 @@ Not affiliated with De'Longhi or Ayla Networks.
 ## License
 
 AGPL-3.0-or-later
+
+### Passive catalogue and receipt diagnostics
+
+`EcamDevice.catalog.snapshot()` reports only catalogue properties already received
+on the LAN link. It sends no reads, writes or session announcements. Descriptor
+(B0 F0), recipe (A6 F0), priority (A8 F0) and name-metadata frames are checked for
+length, CRC and payload structure. Unknown parameter tags stay numeric; priority
+lists do not establish availability. Source properties, reception/last-valid times
+and validation errors are included. Bad updates retain the last valid data with
+an explicit error. Inconsistent descriptor bounds are not offered as valid ranges.
+Storage is bounded to 512 properties and resets with the device object.
+
+Household names are redacted at parse time; serial, PIN and settings frames are
+excluded. The catalogue does not enable drinks or change brew validation.
+`last_datapoint_at`, `last_monitor_at` and `monitor_query_*` distinguish receipt,
+state changes and the last monitor-read outcome. Repeated valid frames count as
+new receipts. Successful reads may still return cached standby data; reception
+time does not prove a new physical state. `machine_info` keeps only observed,
+allowlisted model/firmware properties. Missing metadata remains unknown.
