@@ -4,6 +4,9 @@
     "ECAM450",
     "ECAM452"
   ],
+  "oem_models": [
+    "DL-striker-cb"
+  ],
   "source": "converted from cremalink (https://github.com/miditkl/cremalink) devices/ECAM452.json @ 71c68fa, AGPL-3.0",
   "properties": {
     "app_id": "app_id",

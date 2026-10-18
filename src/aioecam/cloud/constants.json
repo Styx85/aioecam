@@ -1,0 +1,24 @@
+{
+  "_note": "Public constants of the De'Longhi Coffee Link app (identical for every user, useless without account credentials). Taken from cremalink (AGPL-3.0) resources/api_config.json.",
+  "regions": {
+    "eu": {
+      "gigya_api_key": "3_e5qn7USZK-QtsIso1wCelqUKAK_IVEsYshRIssQ-X-k55haiZXmKWDHDRul2e5Y2",
+      "oidc_client_id": "1S8q1WJEs-emOB43Z0-66WnL",
+      "oidc_client_secret": "lmnceiD0B-4KPNN5ZS6WuWU70j9V5BCuSlz2OPsvHkyLryhMkJkPvKsivfTq3RfNYj8GpCELtOBvhaDIzKcBtg",
+      "gigya_sdk_build": "16650",
+      "ayla_app_id": "DeLonghiComfort2-mw-id",
+      "ayla_app_secret": "DeLonghiComfort2-Yg4miiqiNcf0Or-EhJwRh7ACfBY",
+      "fidm_url": "https://fidm.eu1.gigya.com",
+      "socialize_url": "https://socialize.eu1.gigya.com",
+      "accounts_url": "https://accounts.eu1.gigya.com",
+      "consent_url": "https://aylaopenid.delonghigroup.com",
+      "ayla_user_url": "https://user-field-eu.aylanetworks.com",
+      "ayla_ads_url": "https://ads-eu.aylanetworks.com"
+    }
+  },
+  "user_agents": {
+    "browser": "Mozilla/5.0 (iPhone; CPU iPhone OS 13_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/79.0.3945.73 Mobile/15E148 Safari/604.1",
+    "token": "DeLonghiComfort/3 CFNetwork/1568.300.101 Darwin/24.2.0",
+    "api": "datatransport/3.1.2 android/"
+  }
+}

@@ -2,13 +2,18 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
+import aiohttp
 import pytest
 
+from aioecam.cloud.api import AylaCloud
 from aioecam.device import EcamDevice
+from aioecam.ecam import commands
 from aioecam.ecam.monitor import MachineState
 from aioecam.ecam.profile import load_profile
+from aioecam.ecam.value import decode_value
 from aioecam.exceptions import CommandRejected, CommandTimeout
 from aioecam.lan.server import LanServer
+from tests.fake_cloud import FakeCloud
 from tests.fake_device import FakeDevice
 from tests.fake_machine import FakeMachine
 
@@ -165,3 +170,53 @@ async def test_pushes_are_used_when_the_machine_sends_them(
     await ecam.send(ecam.profile.command("wakeup"))
     await ecam.wait_until_ready(timeout=3)
     assert 1 in seen and 7 in seen
+
+
+@pytest.fixture
+async def cloud_rig() -> AsyncIterator[tuple[EcamDevice, FakeMachine, FakeCloud]]:
+    cloud = FakeCloud()
+    region = await cloud.start()
+    device = FakeDevice(lan_key=KEY)
+    await device.start()
+    machine = FakeMachine(device, statistics=TABLE)
+
+    async def deliver(dsn: str, name: str, value: str) -> None:
+        # The cloud path reaches the machine even when the local one did not.
+        machine.ignore_wakeup = False
+        await machine._on_write(name, value)
+
+    cloud.on_datapoint = deliver
+    async with (
+        aiohttp.ClientSession() as http,
+        LanServer(http, host="127.0.0.1", port=0, advertise_ip="127.0.0.1") as server,
+    ):
+        link = server.add_link(
+            device_ip=device.ip, lan_key=KEY, dsn=device.dsn, device_port=device.port, **FAST
+        )
+        api = AylaCloud(http, region, "refresh-0")
+        ecam = EcamDevice(link, load_profile("ecam61x"), poll_interval=0.2, cloud=api)
+        await link.wait_active(3)
+        yield ecam, machine, cloud
+    await device.stop()
+    await cloud.stop()
+
+
+async def test_wake_falls_back_to_cloud(
+    cloud_rig: tuple[EcamDevice, FakeMachine, FakeCloud],
+) -> None:
+    ecam, machine, cloud = cloud_rig
+    machine.ignore_wakeup = True  # local wake-up has no effect
+    state = await ecam.power_on(confirm_timeout=5, local_grace=0.6)
+    assert state.status != 0
+    assert ecam.cloud_fallbacks == 1
+    ((dsn, name, value),) = cloud.datapoints
+    assert (dsn, name) == (ecam.link.dsn, "data_request")
+    assert decode_value(value).frame == commands.power_on()
+
+
+async def test_wake_without_fallback_when_local_works(
+    cloud_rig: tuple[EcamDevice, FakeMachine, FakeCloud],
+) -> None:
+    ecam, _, cloud = cloud_rig
+    await ecam.power_on(confirm_timeout=5, local_grace=2)
+    assert ecam.cloud_fallbacks == 0 and cloud.datapoints == []
