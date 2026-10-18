@@ -27,10 +27,11 @@ import aiohttp
 from aioecam.cloud.api import AylaCloud
 from aioecam.cloud.onboarding import onboard
 from aioecam.cloud.region import load_region
-from aioecam.device import EcamDevice
+from aioecam.device import TAG_NAMES, EcamDevice
 from aioecam.discovery import probe_module
 from aioecam.ecam.monitor import MachineState
 from aioecam.ecam.profile import available_families, load_profile
+from aioecam.ecam.settings import SETTINGS
 from aioecam.exceptions import EcamError
 from aioecam.lan.server import LanServer
 
@@ -166,6 +167,31 @@ async def _command(args: argparse.Namespace, ecam: EcamDevice) -> None:
     elif cmd == "stop":
         await ecam.stop()
         print("stop sent")
+    elif cmd == "monitor":
+        # Compare the cached property with a frame the machine produces on request.
+        cached = await ecam.refresh()
+        print("cached   ", _describe(ecam, cached), f"alarms={cached.alarms.hex()}")
+        fresh = await ecam.request_monitor()
+        print("requested", _describe(ecam, fresh), f"alarms={fresh.alarms.hex()}")
+    elif cmd == "profiles":
+        for slot in await ecam.profiles():
+            print(f"{slot.slot}: {slot.name} (icon {slot.icon})")
+    elif cmd == "profile":
+        await ecam.select_profile(args.slot)
+        print(f"profile {args.slot} selected (acknowledged by the machine)")
+    elif cmd == "settings":
+        for key in ecam.profile.settings:
+            raw = await ecam.read_setting(key)
+            label = SETTINGS[key].options.get(raw, "?")
+            print(f"{key:<16} {raw}  ({label})")
+    elif cmd == "set":
+        await ecam.write_setting(args.key, args.value)
+        print(f"{args.key} = {args.value} (written and read back)")
+    elif cmd == "recipe":
+        recipe = await ecam.read_recipe(args.beverage, slot=args.slot)
+        print(f"{args.beverage} profile {recipe.slot} (beverage id {recipe.beverage_id}):")
+        for tag, value in recipe.params.items():
+            print(f"  0x{tag:02x} {TAG_NAMES.get(tag, '?'):<12} {value}")
     elif cmd == "stats":
         snap = await ecam.read_statistics(
             progress=lambda p: print(f"  page {p['page']}: {p['returned']} values", file=sys.stderr)
@@ -200,6 +226,17 @@ def main() -> None:
     sub.add_parser("stop", help="stop the current beverage")
     sub.add_parser("beverages", help="list stored beverages")
     sub.add_parser("stats", help="read the A2 statistics table")
+    sub.add_parser("monitor", help="compare cached monitor with a requested fresh frame")
+    sub.add_parser("profiles", help="list user profiles (machine must be awake)")
+    prof = sub.add_parser("profile", help="select a user profile")
+    prof.add_argument("slot", type=int)
+    sub.add_parser("settings", help="read the writable settings")
+    st = sub.add_parser("set", help="write a setting, confirmed by reading it back")
+    st.add_argument("key")
+    st.add_argument("value", type=int)
+    rec = sub.add_parser("recipe", help="read a profile's recipe for a beverage")
+    rec.add_argument("beverage")
+    rec.add_argument("--slot", type=int, default=1)
     ob = sub.add_parser("onboard", help="log in to Coffee Link, list machines, fetch LAN keys")
     ob.add_argument("--email", required=True)
     ob.add_argument("--save", action="store_true", help="store key, IP and token in --key-file")

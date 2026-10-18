@@ -9,17 +9,28 @@
     "DL-millcore",
     "DL-pd-soul"
   ],
-  "source": "converted from cremalink (https://github.com/miditkl/cremalink) devices/ECAM610.json @ 71c68fa, AGPL-3.0",
+  "source": "converted from cremalink (https://github.com/miditkl/cremalink) devices/ECAM610.json @ 71c68fa, AGPL-3.0 Session, profile slots and settings from lodzen/cremalink devices/ECAM610.json (AGPL-3.0).",
   "properties": {
     "data_request": "data_request",
     "monitor": "d302_monitor",
-    "data_response": "data_response"
+    "data_response": "data_response",
+    "device_connected": "device_connected"
+  },
+  "session": {
+    "type": "device_connected",
+    "property": "device_connected"
   },
   "idle_status": [
     0,
     7
   ],
   "ready_status": 7,
+  "profile_slots": 5,
+  "profile_entry_size": 21,
+  "settings": [
+    "auto_off",
+    "water_hardness"
+  ],
   "status": {
     "0": "in_standby",
     "1": "waking_up",

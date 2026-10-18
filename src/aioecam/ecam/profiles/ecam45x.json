@@ -7,18 +7,25 @@
   "oem_models": [
     "DL-striker-cb"
   ],
-  "source": "converted from cremalink (https://github.com/miditkl/cremalink) devices/ECAM452.json @ 71c68fa, AGPL-3.0",
+  "source": "converted from cremalink (https://github.com/miditkl/cremalink) devices/ECAM452.json @ 71c68fa, AGPL-3.0 Session, profile slots and data_response from lodzen/cremalink devices/ECAM452.json (AGPL-3.0).",
   "properties": {
     "app_id": "app_id",
     "data_request": "app_data_request",
     "device_connected": "app_device_connected",
-    "monitor": "d302_monitor_machine"
+    "monitor": "d302_monitor_machine",
+    "data_response": "app_data_response"
+  },
+  "session": {
+    "type": "striker"
   },
   "idle_status": [
     0,
     7
   ],
   "ready_status": 7,
+  "profile_slots": 4,
+  "profile_entry_size": 22,
+  "settings": [],
   "status": {
     "0": "in_standby",
     "1": "waking_up",

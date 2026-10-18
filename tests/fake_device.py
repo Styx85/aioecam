@@ -55,6 +55,7 @@ class FakeDevice:
         self._http: aiohttp.ClientSession | None = None
         self._tasks: set[asyncio.Task[None]] = set()
         self._lock = asyncio.Lock()
+        self._send_lock = asyncio.Lock()
 
     async def start(self) -> None:
         app = web.Application()
@@ -175,6 +176,9 @@ class FakeDevice:
 
     async def _post_datapoint(self, name: str, value: str) -> int:
         assert self._http and self._target and self._session
-        sealed = self._session.seal({"name": name, "value": value, "base_type": "string"})
-        async with self._http.post(f"{self._target}/property/datapoint.json", json=sealed) as r:
-            return r.status
+        # Like the real module: one datapoint at a time. Sealing advances the CBC
+        # chain, so concurrent posts could arrive out of order and desync it.
+        async with self._send_lock:
+            sealed = self._session.seal({"name": name, "value": value, "base_type": "string"})
+            async with self._http.post(f"{self._target}/property/datapoint.json", json=sealed) as r:
+                return r.status

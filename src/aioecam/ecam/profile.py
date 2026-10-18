@@ -35,8 +35,12 @@ class Profile:
     models: tuple[str, ...]
     oem_models: tuple[str, ...]
     properties: dict[str, str]
+    session: str  # "device_connected" (timestamp announce) or "striker" (0xE8 handshake)
     idle_status: frozenset[int]
     ready_status: int
+    profile_slots: int
+    profile_entry_size: int
+    settings: tuple[str, ...]
     status_names: dict[int, str]
     accessory_names: dict[int, str]
     flags: dict[str, FlagBit]
@@ -85,8 +89,12 @@ def _parse(data: dict[str, Any]) -> Profile:
         models=tuple(data["models"]),
         oem_models=tuple(data.get("oem_models", ())),
         properties=dict(data["properties"]),
+        session=data["session"]["type"],
         idle_status=frozenset(data["idle_status"]),
         ready_status=int(data["ready_status"]),
+        profile_slots=int(data["profile_slots"]),
+        profile_entry_size=int(data["profile_entry_size"]),
+        settings=tuple(data["settings"]),
         status_names={int(k): v for k, v in data["status"].items()},
         accessory_names={int(k): v for k, v in data["accessory"].items()},
         flags={k: FlagBit(v["source"], v["byte"], v["bit"]) for k, v in data["flags"].items()},
