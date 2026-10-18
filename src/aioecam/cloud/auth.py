@@ -20,7 +20,7 @@ from typing import Any
 import aiohttp
 
 from aioecam.cloud.region import Region
-from aioecam.exceptions import AuthError
+from aioecam.exceptions import AuthError, EcamError
 
 _SCOPE = "openid email profile UID comfort en alexa"
 _REDIRECT = "https://google.it"
@@ -182,16 +182,20 @@ async def login(
 
 async def refresh_tokens(http: aiohttp.ClientSession, region: Region, refresh_token: str) -> Tokens:
     """Exchange a refresh token for a new access/refresh token pair."""
-    async with http.post(
-        f"{region.ayla_user_url}/users/refresh_token.json",
-        headers={"User-Agent": region.token_agent},
-        json={"user": {"refresh_token": refresh_token}},
-    ) as resp:
-        if resp.status in (401, 403, 422):
-            raise AuthError(f"refresh token rejected (HTTP {resp.status})")
-        if resp.status != 200:
-            raise AuthError(f"token refresh failed (HTTP {resp.status})")
-        data = await _json(resp, "refresh")
+    try:
+        async with http.post(
+            f"{region.ayla_user_url}/users/refresh_token.json",
+            headers={"User-Agent": region.token_agent},
+            json={"user": {"refresh_token": refresh_token}},
+        ) as resp:
+            if resp.status in (401, 403, 422):
+                raise AuthError(f"refresh token rejected (HTTP {resp.status})")
+            if resp.status != 200:
+                raise AuthError(f"token refresh failed (HTTP {resp.status})")
+            data = await _json(resp, "refresh")
+    except (aiohttp.ClientError, TimeoutError) as exc:
+        # Not an auth problem: the service is unreachable. Keep it distinguishable.
+        raise EcamError(f"token refresh failed: {exc}") from exc
     try:
         return Tokens(
             access_token=data["access_token"],

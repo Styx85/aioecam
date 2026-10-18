@@ -103,9 +103,14 @@ def load_profile(family: str) -> Profile:
     return _parse(json.loads(text))
 
 
-def available_families() -> list[str]:
+@cache
+def _families() -> tuple[str, ...]:
     files = resources.files("aioecam.ecam.profiles").iterdir()
-    return sorted(f.name.removesuffix(".json") for f in files if f.name.endswith(".json"))
+    return tuple(sorted(f.name.removesuffix(".json") for f in files if f.name.endswith(".json")))
+
+
+def available_families() -> list[str]:
+    return list(_families())
 
 
 def profile_for_model(model: str) -> Profile:
@@ -125,3 +130,10 @@ def profile_for_oem_model(oem_model: str) -> Profile:
         if oem_model in profile.oem_models:
             return profile
     raise LookupError(f"no profile for oem_model {oem_model!r}")
+
+
+# Read every bundled profile at import time: code running inside an event loop
+# (e.g. Home Assistant, which imports integrations in a worker thread) must not
+# touch the filesystem later.
+for _family in _families():
+    load_profile(_family)
