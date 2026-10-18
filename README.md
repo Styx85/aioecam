@@ -12,7 +12,20 @@ Eletta Explore (ECAM452).
   to be embedded in Home Assistant.
 
 > Status: pre-alpha. See [docs/plan.md](docs/plan.md) for architecture and
-> milestones.
+> milestones. The protocol findings this library is built on are documented
+> publicly in [ecam-lan-protocol.md](https://github.com/Styx85/cremalink-ha/blob/main/docs/ecam-lan-protocol.md).
+
+## Command line
+
+```bash
+python -m aioecam --device 192.168.1.50 status --watch 30
+python -m aioecam --device 192.168.1.50 on          # confirmed by the monitor
+python -m aioecam --device 192.168.1.50 brew espresso
+python -m aioecam --device 192.168.1.50 stats       # full A2 table
+```
+
+The LAN key comes from `~/.config/aioecam.json` (`{"lan_key": "..."}`) or
+`AIOECAM_LAN_KEY`.
 
 ## Development
 
