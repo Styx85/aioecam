@@ -15,6 +15,7 @@ import asyncio
 import base64
 import os
 import time
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import aiohttp
@@ -44,6 +45,8 @@ class FakeDevice:
         self.responsive = True  # False: accepts local_reg but never calls back
         # False: module restarted without cloud; no DSN in regtoken.json, local_reg -> 404
         self.lan_enabled = True
+        # Hook for a simulated machine behind the module: called for every property write.
+        self.on_write: Callable[[str, str], Awaitable[None]] | None = None
         self.dsn = "AC000W000000001"
         self.port = 0
         self._session: LanSession | None = None
@@ -163,6 +166,8 @@ class FakeDevice:
             self.writes.append((prop["name"], value))
             if self.echo_writes:
                 await self._post_datapoint(prop["name"], value)
+            if self.on_write:
+                self._spawn(self.on_write(prop["name"], value))
         for entry in data.get("cmds", []):
             name = entry["cmd"]["resource"].split("name=", 1)[1]
             if name in self.properties:

@@ -65,3 +65,11 @@ def test_unknown_status_name() -> None:
 def test_unknown_command() -> None:
     with pytest.raises(KeyError, match="no command"):
         load_profile("ecam61x").command("teleport")
+
+
+def test_busy_while_brewing_with_status_ready() -> None:
+    soul = load_profile("ecam61x")
+    brewing = MachineState(0, b"\0\0", b"\0\0\0\0", status=7, action=11, progress=44)
+    idle = MachineState(0, b"\0\0", b"\0\0\0\0", status=7, action=0, progress=0)
+    assert soul.is_busy(brewing) and not soul.is_ready(brewing)
+    assert not soul.is_busy(idle) and soul.is_ready(idle)

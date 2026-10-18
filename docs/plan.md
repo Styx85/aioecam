@@ -1,6 +1,6 @@
 # aioecam – Architektur- und Umsetzungsplan
 
-Stand: 2026-10-18 · Ziel: eigene async Python-Library für De'Longhi ECAM
+Stand: 2026-10-18 (M0–M3 erledigt) · Ziel: eigene async Python-Library für De'Longhi ECAM
 (Coffee Link / Ayla) plus eine HACS-Integration **ohne Add-on**. Local first,
 Cloud nur für Onboarding und als Fallback.
 
@@ -134,6 +134,7 @@ async with LanServer(port=10280) as server:            # einmal pro Prozess
 | **M4** | `cloud/`: async Auth, LAN-Config, Wake-Fallback | Onboarding nur mit E-Mail/Passwort; Wecken-Fallback getestet (WAN an) |
 | **M5** | HA-Integration im Fork auf aioecam umgestellt (Branch), Migration v1→v2, Add-on entfernt | Deine Installation läuft ohne Add-on, alte Entitäten und Historie unverändert |
 | **M6** | Härtung: 24-h-Soak (inkl. Standby-Nacht, WAN-Sperre), Release `aioecam 0.1.0` auf PyPI, HACS-Release | Keine hängende Session im Soak; Weck-Erfolgsquote nach langem Standby gemessen |
+| **M6b** | Rename: ohne Add-on und ohne cremalink-Core ist es nicht mehr "Cremalink". Neuer Name für Integration, Repo, HACS-Eintrag und Icon-Texte; Credits an cremalink bleiben. Die HA-Domain `cremalink_ha` nur mit eigener Migration ändern (sonst verlieren Installationen ihre Entitäten); erst Anzeigename/Repo, Domain separat entscheiden | Neuer Name überall sichtbar, bestehende Installationen laufen ohne Neueinrichtung weiter |
 | **M7** | Optional: parametrische Getränke, Profile/Benutzer (cremalink-ha#47), Eletta-App-ID-Handshake, US-Region, Gespräch mit Upstream | — |
 
 Reihenfolge M1 → M2 → M3 ist zwingend; M4 kann parallel zu M3 laufen.

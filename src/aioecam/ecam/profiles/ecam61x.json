@@ -8,12 +8,14 @@
   "source": "converted from cremalink (https://github.com/miditkl/cremalink) devices/ECAM610.json @ 71c68fa, AGPL-3.0",
   "properties": {
     "data_request": "data_request",
-    "monitor": "d302_monitor"
+    "monitor": "d302_monitor",
+    "data_response": "data_response"
   },
   "idle_status": [
     0,
     7
   ],
+  "ready_status": 7,
   "status": {
     "0": "in_standby",
     "1": "waking_up",
