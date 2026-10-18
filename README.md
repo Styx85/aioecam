@@ -72,7 +72,8 @@ on the LAN link. It sends no reads, writes or session announcements. Descriptor
 length, CRC and payload structure. Unknown parameter tags stay numeric; priority
 lists do not establish availability. Source properties, reception/last-valid times
 and validation errors are included. Bad updates retain the last valid data with
-an explicit error. Inconsistent descriptor bounds are not offered as valid ranges.
+an explicit error. Reversed min/max bounds remain errors. Raw defaults outside those bounds are
+preserved with `default_in_range: false`; their meaning remains unconfirmed.
 Storage is bounded to 512 properties and resets with the device object.
 
 Household names are redacted at parse time; serial, PIN and settings frames are

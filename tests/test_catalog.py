@@ -20,7 +20,12 @@ def test_ranges_recipes_unknown_tags_and_priority() -> None:
     catalog.observe("recipe", value(0xA6, bytes.fromhex("01 01 01 0028 7e 03")), 2)
     catalog.observe("priority", value(0xA8, bytes([1, 16])), 3)
     entries = catalog.snapshot()["entries"]
-    assert entries[0]["data"]["ranges"][1] == {"min": 20, "default": 40, "max": 180}
+    assert entries[0]["data"]["ranges"][1] == {
+        "min": 20,
+        "default": 40,
+        "max": 180,
+        "default_in_range": True,
+    }
     assert entries[1]["data"]["parameters"] == {1: 40, 126: 3}
     assert entries[2]["data"]["beverage_order"] == [16]  # never drops first entry
     assert catalog.snapshot()["scope"] == "observed_properties_only"
@@ -74,3 +79,19 @@ def test_echo_and_wrong_flags_cannot_create_catalogue_entries() -> None:
     catalog.observe("echo", encode_value(Frame(0x0D, 0xA6, 0xF0, b"\x01\x01")), 1)
     catalog.observe("other", encode_value(Frame(RESPONSE, 0xA6, 0x0F, b"\x01\x01")), 1)
     assert catalog.snapshot()["entries"] == []
+
+
+def test_real_soul_descriptor_defaults_outside_bounds_are_preserved() -> None:
+    catalog = PassiveCatalog()
+    # Travel-mug and custom-slot patterns seen in the user's live capture.
+    catalog.observe("descriptor", value(0xB0, bytes.fromhex("1a 01 0028 0000 00f0 1b 00 ff 04")), 1)
+    entry = catalog.snapshot()["entries"][0]
+    assert entry["last_error"] is None
+    assert entry["data"]["ranges"][1] == {
+        "min": 40,
+        "default": 0,
+        "max": 240,
+        "default_in_range": False,
+    }
+    assert entry["data"]["ranges"][27]["default"] == 255
+    assert entry["data"]["ranges"][27]["default_in_range"] is False
