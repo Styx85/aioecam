@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "aioecam"
-version = "0.1.0b2"
+version = "0.1.0b3"
 description = "Async local-first client for De'Longhi ECAM coffee machines (Coffee Link / Ayla LAN mode)"
 readme = "README.md"
 license = "AGPL-3.0-or-later"
