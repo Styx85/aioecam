@@ -165,9 +165,11 @@ class LanLink:
         self._state_callbacks.append(callback)
         return _remover(self._state_callbacks, callback)
 
-    async def write(self, name: str, value: str, *, timeout: float = 10.0) -> None:
+    async def write(
+        self, name: str, value: str, *, timeout: float = 10.0, newline: bool = True
+    ) -> None:
         """Write a property; returns once the machine has fetched it."""
-        item = _Outgoing(property_set(self.dsn, name, value))
+        item = _Outgoing(property_set(self.dsn, name, value, newline=newline))
         await self._send(item, timeout, f"write {name}")
 
     async def read(self, name: str, *, timeout: float = 10.0) -> Datapoint:

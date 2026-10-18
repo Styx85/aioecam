@@ -10,6 +10,7 @@ which is what the real machine did in an aioecam session.
 from __future__ import annotations
 
 import asyncio
+import time
 
 from aioecam.ecam.frame import RESPONSE, Frame
 from aioecam.ecam.statistics import OPCODE_STATISTICS
@@ -35,6 +36,14 @@ class FakeMachine:
         self.max_a2_page = 10  # firmware that times out on bigger pages answers nothing
         self.received: list[Frame] = []
         self.push_changes = False
+        # M7: write session, settings, profiles, recipes (lodzen's Soul captures)
+        self.session_at: float | None = None
+        self.require_session = True
+        self.settings = {0x3E: 2, 0x32: 1}
+        self.profile = 1
+        self.profile_names_value: str | None = None
+        self.recipes: dict[tuple[int, int], str] = {}
+        self.monitor_requests = 0
         device.properties[MONITOR] = monitor_value(0, action=2, progress=100)
         device.on_write = self._on_write
 
@@ -44,7 +53,19 @@ class FakeMachine:
         if self.push_changes:
             await self.device.push(MONITOR, self.device.properties[MONITOR])
 
+    def _session_open(self) -> bool:
+        return not self.require_session or (
+            self.session_at is not None and time.time() - self.session_at < 300
+        )
+
+    async def _respond(self, opcode: int, flags: int, payload: bytes) -> None:
+        await self.device.push(RESPONSE_PROP, encode_value(Frame(RESPONSE, opcode, flags, payload)))
+
     async def _on_write(self, name: str, value: str) -> None:
+        if name == "device_connected":
+            assert value.isdigit(), f"session announce must be a bare timestamp, got {value!r}"
+            self.session_at = time.time()
+            return
         if name != "data_request":
             return
         frame = decode_value(value).frame
@@ -66,6 +87,34 @@ class FakeMachine:
             await self._set(7)
         elif frame.opcode == OPCODE_STATISTICS:
             await self._answer_statistics(frame)
+        elif frame.opcode == 0x75 and not frame.payload:
+            self.monitor_requests += 1
+            await self.device.push(MONITOR, self.device.properties[MONITOR])
+        elif frame.opcode == 0x95:
+            param = int.from_bytes(frame.payload[:2], "big")
+            value = self.settings.get(param, 0)
+            # Measured on the Soul: republished into its own property, not data_response.
+            reply = encode_value(
+                Frame(RESPONSE, 0x95, 0xF0, frame.payload[:2] + value.to_bytes(4, "big"))
+            )
+            await self.device.push(f"d{param:03d}_mchn_sett", reply)
+        elif frame.opcode == 0x90:
+            param = int.from_bytes(frame.payload[:2], "big")
+            if self._session_open():  # without a session the write is silently dropped
+                self.settings[param] = int.from_bytes(frame.payload[2:6], "big")
+            await self._respond(0x90, frame.flags, frame.payload[:2] + b"\x00")
+        elif frame.opcode == 0xA9:
+            slot = frame.payload[0]
+            ok = self._session_open()
+            if ok:
+                self.profile = slot
+            await self._respond(0xA9, 0xF0, bytes([slot, 0 if ok else 1]))
+        elif frame.opcode == 0xA4 and self.profile_names_value:
+            await self.device.push(RESPONSE_PROP, self.profile_names_value)
+        elif frame.opcode == 0xA6:
+            key = (frame.payload[0], frame.payload[1])
+            if key in self.recipes:  # republished, e.g. d039_1_rec_espresso
+                await self.device.push(f"d0xx_{key[0]}_rec_{key[1]}", self.recipes[key])
 
     async def _answer_statistics(self, request: Frame) -> None:
         start = int.from_bytes(request.payload[:2], "big")

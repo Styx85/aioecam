@@ -1,16 +1,20 @@
 from __future__ import annotations
 
+import asyncio
+import time
 from collections.abc import AsyncIterator
+from typing import Any
 
 import aiohttp
 import pytest
 
 from aioecam.cloud.api import AylaCloud
-from aioecam.device import EcamDevice
+from aioecam.device import TAG_COFFEE_ML, TAG_MILK, TAG_WATER_ML, EcamDevice
 from aioecam.ecam import commands
+from aioecam.ecam.frame import RESPONSE, Frame
 from aioecam.ecam.monitor import MachineState
 from aioecam.ecam.profile import load_profile
-from aioecam.ecam.value import decode_value
+from aioecam.ecam.value import decode_value, encode_value
 from aioecam.exceptions import CommandRejected, CommandTimeout
 from aioecam.lan.server import LanServer
 from tests.fake_cloud import FakeCloud
@@ -230,3 +234,226 @@ async def test_unsubscribe_twice_is_harmless(rig: tuple[EcamDevice, FakeMachine]
     off = ecam.link.on_state(lambda s: None)
     off()
     off()
+
+
+# --- M7: session, profiles, settings, recipes ------------------------------------------
+
+D034_PROFILES_1_3 = (
+    "0Eek8AEDAEEAbABpAGMAZQAAAAAAAAAAAAAQAEIAbwBiAAAAAAAAAAAAAAAAAAAF"
+    "AFAAcgBvAGYAaQBsACAAMwAAAAAJAKhz"
+)  # lodzen capture, anonymised names
+D039_RECIPE_ESPRESSO_P1 = "0BSm8AEBCAABACgbAQIEBAAZAaPq"  # lodzen capture
+
+
+async def test_session_announce_is_a_bare_timestamp(rig: tuple[EcamDevice, FakeMachine]) -> None:
+    ecam, machine = rig
+    await ecam.announce_session()
+    await eventually_true(lambda: machine.session_at is not None)
+    first = machine.session_at
+    await ecam.announce_session()  # fresh: not repeated
+    assert machine.session_at == first
+
+
+async def test_select_profile(rig: tuple[EcamDevice, FakeMachine]) -> None:
+    ecam, machine = rig
+    await ecam.select_profile(3, timeout=3)
+    assert machine.profile == 3
+    with pytest.raises(ValueError):
+        await ecam.select_profile(6)
+
+
+async def test_select_profile_refused_without_session(rig: tuple[EcamDevice, FakeMachine]) -> None:
+    ecam, machine = rig
+    ecam._session_at = time.time()  # pretend a session exists the machine never saw
+    with pytest.raises(CommandRejected, match="refused profile"):
+        await ecam.select_profile(2, timeout=3)
+    assert machine.profile == 1
+
+
+async def test_profile_selection_waits_past_previous_slots_ack(
+    rig: tuple[EcamDevice, FakeMachine],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ecam, machine = rig
+    respond = machine._respond
+
+    async def stale_then_current(opcode: int, flags: int, payload: bytes) -> None:
+        if opcode == 0xA9:
+            await respond(opcode, flags, b"\x01\x00")
+            await asyncio.sleep(0.05)
+        await respond(opcode, flags, payload)
+
+    monkeypatch.setattr(machine, "_respond", stale_then_current)
+    await ecam.select_profile(2, timeout=3)
+    assert machine.profile == 2
+
+
+async def test_profile_ack_can_require_a_property_read(
+    rig: tuple[EcamDevice, FakeMachine],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ecam, machine = rig
+    respond = machine._respond
+
+    async def store_only(opcode: int, flags: int, payload: bytes) -> None:
+        if opcode == 0xA9:
+            machine.device.properties["data_response"] = encode_value(
+                Frame(RESPONSE, opcode, flags, payload)
+            )
+        else:
+            await respond(opcode, flags, payload)
+
+    monkeypatch.setattr(machine, "_respond", store_only)
+    await ecam.select_profile(2, timeout=3)
+    await ecam.select_profile(1, timeout=3)
+    assert machine.profile == 1
+    assert not ecam._responses
+
+
+async def test_polled_profile_selection_still_reports_timeout(
+    rig: tuple[EcamDevice, FakeMachine],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ecam, machine = rig
+
+    async def silent(opcode: int, flags: int, payload: bytes) -> None:
+        pass
+
+    monkeypatch.setattr(machine, "_respond", silent)
+    with pytest.raises(CommandTimeout, match="profile 2"):
+        await ecam.select_profile(2, timeout=0.7)
+    assert not ecam._responses
+    assert not ecam.link._waiters.get("data_response")
+
+
+async def test_profiles(rig: tuple[EcamDevice, FakeMachine]) -> None:
+    ecam, machine = rig
+    machine.profile_names_value = D034_PROFILES_1_3
+    slots = await ecam.profiles(timeout=3)
+    assert [s.name for s in slots] == ["Alice", "Bob", "Profil 3"]
+
+
+async def test_settings_roundtrip(rig: tuple[EcamDevice, FakeMachine]) -> None:
+    ecam, machine = rig
+    assert await ecam.read_setting("auto_off", timeout=3) == 2
+    await ecam.write_setting("auto_off", 1, timeout=3)
+    assert machine.settings[0x3E] == 1
+
+
+async def test_setting_write_dropped_by_machine_is_detected(
+    rig: tuple[EcamDevice, FakeMachine],
+) -> None:
+    ecam, _ = rig
+    ecam._session_at = time.time()  # machine has no session: the write is dropped
+    with pytest.raises(CommandRejected, match="reads back 2"):
+        await ecam.write_setting("auto_off", 0, timeout=3)
+
+
+async def test_setting_validation(rig: tuple[EcamDevice, FakeMachine]) -> None:
+    ecam, _ = rig
+    with pytest.raises(ValueError):
+        await ecam.write_setting("auto_off", 9)
+    with pytest.raises(KeyError):
+        await ecam.read_setting("cup_light")
+
+
+async def test_read_recipe(rig: tuple[EcamDevice, FakeMachine]) -> None:
+    ecam, machine = rig
+    machine.recipes[(1, 1)] = D039_RECIPE_ESPRESSO_P1
+    recipe = await ecam.read_recipe("espresso", slot=1, timeout=3)
+    assert recipe.params[TAG_COFFEE_ML] == 40
+
+
+async def test_repeated_recipe_read_uses_learned_property_not_cached_value(
+    rig: tuple[EcamDevice, FakeMachine],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ecam, machine = rig
+    machine.recipes[(1, 1)] = D039_RECIPE_ESPRESSO_P1
+    push = machine.device.push
+    published = False
+
+    async def publish_recipe_once(name: str, value: str) -> int:
+        nonlocal published
+        machine.device.properties[name] = value
+        if "_rec_" in name:
+            if published:
+                return 200
+            published = True
+        return await push(name, value)
+
+    monkeypatch.setattr(machine.device, "push", publish_recipe_once)
+    assert (await ecam.read_recipe("espresso", timeout=3)).params[TAG_COFFEE_ML] == 40
+    old = decode_value(D039_RECIPE_ESPRESSO_P1).frame
+    machine.recipes[(1, 1)] = encode_value(
+        Frame(
+            old.direction,
+            old.opcode,
+            old.flags,
+            old.payload.replace(bytes.fromhex("010028"), bytes.fromhex("010032")),
+        )
+    )
+    assert (await ecam.read_recipe("espresso", timeout=3)).params[TAG_COFFEE_ML] == 50
+    assert not ecam._responses
+
+
+async def test_hot_water_after_recipe_read_without_second_publication(
+    rig: tuple[EcamDevice, FakeMachine],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ecam, machine = rig
+    machine.step = 0.2
+    recipe = Frame(RESPONSE, 0xA6, 0xF0, bytes.fromhex("011019010f00fa1b01"))
+    machine.recipes[(1, 0x10)] = encode_value(recipe)
+    push = machine.device.push
+    published = False
+
+    async def publish_recipe_once(name: str, value: str) -> int:
+        nonlocal published
+        machine.device.properties[name] = value
+        if "_rec_" in name:
+            if published:
+                return 200
+            published = True
+        return await push(name, value)
+
+    monkeypatch.setattr(machine.device, "push", publish_recipe_once)
+    await ecam.power_on(confirm_timeout=3)
+    await ecam.wait_until_ready(timeout=3)
+    assert (await ecam.read_recipe("hot_water", timeout=3)).params[TAG_WATER_ML] == 250
+    await ecam.brew_custom("hot_water", {TAG_WATER_ML: 100}, slot=1)
+    sent = [f for f in machine.received if f.opcode == 0x83]
+    assert len(sent) == 1
+    assert sent[0].encode().hex() == "0d0d83f010010f00641b0106e5e1"
+    assert decode_value(machine.recipes[(1, 0x10)]).frame == recipe
+
+
+async def test_brew_custom_changes_only_the_override(rig: tuple[EcamDevice, FakeMachine]) -> None:
+    ecam, machine = rig
+    machine.step = 0.4
+    machine.recipes[(1, 1)] = D039_RECIPE_ESPRESSO_P1
+    await ecam.power_on(confirm_timeout=5)
+    await ecam.wait_until_ready(timeout=5)
+    await ecam.brew_custom("espresso", {TAG_COFFEE_ML: 30}, slot=1)
+    sent = [f for f in machine.received if f.opcode == 0x83][-1]
+    # coffee 30 ml (0x001e), everything else as the machine's recipe, filtered like the app
+    assert sent.payload.hex() == "0101" + "01001e" + "1b01" + "0204" + "0400" + "06"
+
+
+async def test_brew_custom_refuses_unknown_parameter(rig: tuple[EcamDevice, FakeMachine]) -> None:
+    ecam, machine = rig
+    machine.recipes[(1, 1)] = D039_RECIPE_ESPRESSO_P1
+    with pytest.raises(ValueError, match="no parameter"):
+        await ecam.brew_custom("espresso", {TAG_MILK: 100}, slot=1)
+
+
+async def test_monitor_request(rig: tuple[EcamDevice, FakeMachine]) -> None:
+    ecam, machine = rig
+    state = await ecam.request_monitor(timeout=3)
+    assert machine.monitor_requests == 1 and state.status == 0
+
+
+async def eventually_true(check: Any, timeout: float = 3.0) -> None:
+    async with asyncio.timeout(timeout):
+        while not check():  # noqa: ASYNC110 - test helper
+            await asyncio.sleep(0.02)

@@ -8,9 +8,16 @@ from typing import Any
 DATAPOINT_URI = "/local_lan/property/datapoint.json"
 
 
-def property_set(dsn: str, name: str, value: str, base_type: str = "string") -> dict[str, Any]:
-    """App -> machine: write a property. String values carry a trailing newline."""
-    if base_type == "string" and not value.endswith("\n"):
+def property_set(
+    dsn: str, name: str, value: str, base_type: str = "string", *, newline: bool = True
+) -> dict[str, Any]:
+    """App -> machine: write a property.
+
+    Frame-carrying strings (``data_request``) get a trailing newline like the
+    official app sends them; plain values such as the ``device_connected``
+    timestamp are written as they are (``newline=False``).
+    """
+    if newline and base_type == "string" and not value.endswith("\n"):
         value += "\n"
     return {
         "properties": [
