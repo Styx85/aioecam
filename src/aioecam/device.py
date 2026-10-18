@@ -13,6 +13,7 @@ import contextlib
 import logging
 import time
 from collections.abc import Callable
+from typing import Protocol
 
 from aioecam.ecam import commands
 from aioecam.ecam.frame import Frame
@@ -37,6 +38,14 @@ STATUS_OFF = 0
 STATUS_GOING_TO_SLEEP = 2
 
 StateCallback = Callable[[MachineState], None]
+
+
+class CloudWriter(Protocol):
+    """What the wake fallback needs from a cloud client (``AylaCloud`` fits)."""
+
+    async def write_property(self, dsn: str, name: str, value: str) -> None: ...
+
+
 ProgressCallback = Callable[[dict[str, int]], None]
 
 
@@ -48,10 +57,13 @@ class EcamDevice:
         *,
         app_id: bytes | None = None,
         poll_interval: float = 3.0,
+        cloud: CloudWriter | None = None,
     ) -> None:
         self.link = link
         self.profile = profile
         self._app_id = app_id
+        self._cloud = cloud
+        self.cloud_fallbacks = 0  # diagnostics: how often the cloud had to step in
         self._poll_interval = poll_interval
         self.state: MachineState | None = None
         self._listeners: list[StateCallback] = []
@@ -116,12 +128,35 @@ class EcamDevice:
         write = commands.request_write(self.profile, frame, app_id=self._app_id)
         await self.link.write(write.name, write.value, timeout=timeout)
 
-    async def power_on(self, *, confirm_timeout: float = 60.0) -> MachineState:
+    async def power_on(
+        self, *, confirm_timeout: float = 60.0, local_grace: float = 15.0
+    ) -> MachineState:
+        """Wake the machine locally; if it does not react within ``local_grace``
+        and a cloud client is configured, send the same frame through the cloud.
+
+        Waking without internet failed once in testing (after a long standby),
+        hence the fallback.
+        """
         state = await self.refresh()
         if state.status != STATUS_OFF:
             return state
-        await self.send(commands.power_on())
-        return await self.wait_for(lambda s: s.status != STATUS_OFF, confirm_timeout, "power on")
+        frame = commands.power_on()
+        await self.send(frame)
+        awake: Callable[[MachineState], bool] = lambda s: s.status != STATUS_OFF  # noqa: E731
+        if self._cloud is None:
+            return await self.wait_for(awake, confirm_timeout, "power on")
+        try:
+            return await self.wait_for(awake, min(local_grace, confirm_timeout), "power on")
+        except CommandTimeout:
+            remaining = confirm_timeout - local_grace
+            if remaining <= 0:
+                raise
+        _LOGGER.info("%s: no reaction to the local wake-up, sending it via the cloud",
+                     self.link.device_ip)  # fmt: skip
+        write = commands.request_write(self.profile, frame, app_id=self._app_id)
+        await self._cloud.write_property(self.link.dsn, write.name, write.value)
+        self.cloud_fallbacks += 1
+        return await self.wait_for(awake, remaining, "power on (cloud fallback)")
 
     async def power_off(self, *, confirm_timeout: float = 60.0) -> MachineState:
         state = await self.refresh()

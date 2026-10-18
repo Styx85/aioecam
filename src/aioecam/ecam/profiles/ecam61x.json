@@ -5,6 +5,10 @@
     "ECAM612",
     "ECAM613"
   ],
+  "oem_models": [
+    "DL-millcore",
+    "DL-pd-soul"
+  ],
   "source": "converted from cremalink (https://github.com/miditkl/cremalink) devices/ECAM610.json @ 71c68fa, AGPL-3.0",
   "properties": {
     "data_request": "data_request",

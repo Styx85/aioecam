@@ -33,6 +33,7 @@ class StoredCommand:
 class Profile:
     family: str
     models: tuple[str, ...]
+    oem_models: tuple[str, ...]
     properties: dict[str, str]
     idle_status: frozenset[int]
     ready_status: int
@@ -82,6 +83,7 @@ def _parse(data: dict[str, Any]) -> Profile:
     return Profile(
         family=data["family"],
         models=tuple(data["models"]),
+        oem_models=tuple(data.get("oem_models", ())),
         properties=dict(data["properties"]),
         idle_status=frozenset(data["idle_status"]),
         ready_status=int(data["ready_status"]),
@@ -114,3 +116,12 @@ def profile_for_model(model: str) -> Profile:
         if any(key.startswith(m) for m in profile.models):
             return profile
     raise LookupError(f"no profile for model {model!r}")
+
+
+def profile_for_oem_model(oem_model: str) -> Profile:
+    """Find the profile for an Ayla ``oem_model`` such as ``"DL-millcore"``."""
+    for family in available_families():
+        profile = load_profile(family)
+        if oem_model in profile.oem_models:
+            return profile
+    raise LookupError(f"no profile for oem_model {oem_model!r}")
