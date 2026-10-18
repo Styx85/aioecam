@@ -134,6 +134,21 @@ The test LAN server was closed after completion. The operator was told to
 reactivate HA; HA reactivation and subsequent HA state delivery have not been
 verified here.
 
+### Follow-up: hot-water A2 counter correction
+
+After the test, the operator confirmed that the statistic labelled "Tea" had
+increased from 2 to 3. The fresh HA A2 snapshot at
+`2026-10-18T20:37:21.305742+00:00` contained `3018 = 0` and `3019 = 3`.
+The tested machine has no tea function according to the operator, and its
+stored `hot_water` command uses beverage ID `0x10`; the profile contains no
+separate tea command. The inherited mapping of `3018` to hot water and
+`3019` to tea was therefore incorrect for this hardware.
+
+From version `0.1.0b4`, `3019` maps to `hot_water`; no `tea` statistic is
+invented, and `3018` is preserved as unknown/raw. The client did not collect
+a pre-brew A2 snapshot: the 2 → 3 delta is operator evidence rather than a
+saved pair of client snapshots. Other models still need owner confirmation.
+
 ## Resume the live checks
 
 Run from the LAN test host with the existing private key file and the machine

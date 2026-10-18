@@ -76,8 +76,10 @@ ECAM61X_DIRECT: dict[int, str] = {
     3015: "hot_milk",
     3016: "cappuccino_doppio",
     3017: "cappuccino_mix",
-    3018: "hot_water",
-    3019: "tea",
+    # ECAM610.75: one 100 ml hot-water command (beverage 0x10) incremented
+    # 3019 from 2 to 3; 3018 stayed at 0. The old "tea" label was wrong.
+    # 3018 has no confirmed meaning and remains in raw/unknown statistics.
+    3019: "hot_water",
     3020: "coffee_pot",
     3037: "espresso_soul",
     3046: "over_ice",
