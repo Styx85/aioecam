@@ -70,6 +70,13 @@ class _Outgoing:
     )
 
 
+def _fail(fut: asyncio.Future[Any], error: BaseException) -> None:
+    """Fail a future and mark its exception as retrieved: a caller that already
+    gave up (timeout, cancellation) must not cause "exception was never retrieved"."""
+    fut.set_exception(error)
+    fut.exception()
+
+
 DatapointCallback = Callable[[Datapoint], None]
 StateCallback = Callable[[LinkState], None]
 
@@ -132,12 +139,12 @@ class LanLink:
         error = NotConnected("link closed")
         for item in self._outgoing:
             if not item.delivered.done():
-                item.delivered.set_exception(error)
+                _fail(item.delivered, error)
         self._outgoing.clear()
         for futures in self._waiters.values():
             for fut in futures:
                 if not fut.done():
-                    fut.set_exception(error)
+                    _fail(fut, error)
         self._waiters.clear()
 
     async def wait_active(self, timeout: float) -> None:

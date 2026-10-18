@@ -58,3 +58,8 @@ def load_region(name: str = "eu") -> Region:
         api_agent=agents["api"],
         **values,
     )
+
+
+# Read the constants at import time so callers in an event loop never block on file I/O.
+for _region in ("eu",):
+    load_region(_region)

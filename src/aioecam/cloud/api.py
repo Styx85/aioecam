@@ -93,20 +93,23 @@ class AylaCloud:
                 "Authorization": f"auth_token {await self._access_token(force=attempt == 2)}",
                 "Accept": "application/json",
             }
-            async with self._http.request(
-                method, url, headers=headers, json=json, timeout=aiohttp.ClientTimeout(total=20)
-            ) as resp:
-                if resp.status == 401 and attempt == 1:
-                    continue  # access token revoked early: refresh once
-                if resp.status == 401:
-                    raise AuthError("cloud rejected a fresh access token")
-                if resp.status == 404 and allow_404:
-                    return None
-                if resp.status >= 400:
-                    raise CloudError(f"{method} {path} -> HTTP {resp.status}")
-                if resp.status == 204:
-                    return None
-                return await resp.json(content_type=None)
+            try:
+                async with self._http.request(
+                    method, url, headers=headers, json=json, timeout=aiohttp.ClientTimeout(total=20)
+                ) as resp:
+                    if resp.status == 401 and attempt == 1:
+                        continue  # access token revoked early: refresh once
+                    if resp.status == 401:
+                        raise AuthError("cloud rejected a fresh access token")
+                    if resp.status == 404 and allow_404:
+                        return None
+                    if resp.status >= 400:
+                        raise CloudError(f"{method} {path} -> HTTP {resp.status}")
+                    if resp.status == 204:
+                        return None
+                    return await resp.json(content_type=None)
+            except (aiohttp.ClientError, TimeoutError) as exc:
+                raise CloudError(f"{method} {path} failed: {exc}") from exc
         raise AssertionError("unreachable")
 
     # --- devices -------------------------------------------------------------
