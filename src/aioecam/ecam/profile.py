@@ -35,6 +35,7 @@ class Profile:
     models: tuple[str, ...]
     properties: dict[str, str]
     idle_status: frozenset[int]
+    ready_status: int
     status_names: dict[int, str]
     accessory_names: dict[int, str]
     flags: dict[str, FlagBit]
@@ -63,9 +64,17 @@ class Profile:
     def read_flags(self, state: MachineState) -> dict[str, bool]:
         return {name: state.bit(f.source, f.byte, f.bit) for name, f in self.flags.items()}
 
+    def is_ready(self, state: MachineState) -> bool:
+        """Ready and doing nothing: the only state in which a beverage may start."""
+        return state.status == self.ready_status and state.action == 0
+
     def is_busy(self, state: MachineState) -> bool:
-        # The machine runs internal routines with action != 0 while idle, so
-        # busy is derived from status alone (cremalink#249).
+        # Standby keeps action != 0 for internal routines, so outside "ready"
+        # busy follows the status (cremalink#249). But a beverage runs with
+        # status staying "ready" and only action/progress changing (measured:
+        # espresso on ECAM610.75 went through actions 4, 6, 8, 9, 11).
+        if state.status == self.ready_status:
+            return state.action != 0
         return state.status not in self.idle_status
 
 
@@ -75,6 +84,7 @@ def _parse(data: dict[str, Any]) -> Profile:
         models=tuple(data["models"]),
         properties=dict(data["properties"]),
         idle_status=frozenset(data["idle_status"]),
+        ready_status=int(data["ready_status"]),
         status_names={int(k): v for k, v in data["status"].items()},
         accessory_names={int(k): v for k, v in data["accessory"].items()},
         flags={k: FlagBit(v["source"], v["byte"], v["bit"]) for k, v in data["flags"].items()},

@@ -1,8 +1,9 @@
 """EcamDevice: the machine as one object, with confirmed commands.
 
-A command only counts as done once the monitor shows its effect. The machine
-pushes monitor frames on its own while awake; while sleeping it keeps the last
-frame, so confirmation also polls the monitor as a fallback.
+A command only counts as done once the monitor shows its effect. Measured on
+an ECAM610.75: the machine does not reliably push monitor changes, it answers
+reads. So confirmation polls, and ``start_polling`` keeps ``state`` current
+(fast while awake, slow in standby, where the module returns a frozen frame).
 """
 
 from __future__ import annotations
@@ -34,7 +35,6 @@ _LOGGER = logging.getLogger(__name__)
 
 STATUS_OFF = 0
 STATUS_GOING_TO_SLEEP = 2
-STATUS_READY = 7
 
 StateCallback = Callable[[MachineState], None]
 ProgressCallback = Callable[[dict[str, int]], None]
@@ -57,6 +57,7 @@ class EcamDevice:
         self._listeners: list[StateCallback] = []
         self._changed = asyncio.Event()
         self._responses: list[asyncio.Queue[Frame]] = []
+        self._poller: asyncio.Task[None] | None = None
         link.subscribe(self._on_monitor, name=profile.monitor_property)
         if "data_response" in profile.properties:
             link.subscribe(self._on_response, name=profile.properties["data_response"])
@@ -120,34 +121,41 @@ class EcamDevice:
         if state.status != STATUS_OFF:
             return state
         await self.send(commands.power_on())
-        return await self._wait_for(lambda s: s.status != STATUS_OFF, confirm_timeout, "power on")
+        return await self.wait_for(lambda s: s.status != STATUS_OFF, confirm_timeout, "power on")
 
     async def power_off(self, *, confirm_timeout: float = 60.0) -> MachineState:
         state = await self.refresh()
         if state.status in (STATUS_OFF, STATUS_GOING_TO_SLEEP):
             return state
         await self.send(commands.power_off())
-        return await self._wait_for(
+        return await self.wait_for(
             lambda s: s.status in (STATUS_OFF, STATUS_GOING_TO_SLEEP), confirm_timeout, "power off"
         )
 
     async def brew(self, beverage: str, *, confirm_timeout: float = 30.0) -> MachineState:
-        """Start a stored beverage; confirmed once the machine leaves "ready"."""
+        """Start a stored beverage; confirmed once the machine reports activity.
+
+        The status stays "ready" while a beverage runs; only action/progress
+        change, which ``Profile.is_busy`` accounts for.
+        """
         frame = self.profile.command(beverage)
         state = await self.refresh()
-        if state.status != STATUS_READY:
+        if not self.profile.is_ready(state):
             raise CommandRejected(
-                f"machine is not ready for {beverage} ({self.profile.status_name(state)})"
+                f"machine is not ready for {beverage} ({self.profile.status_name(state)}, "
+                f"action {state.action})"
             )
         await self.send(frame)
-        return await self._wait_for(
-            lambda s: s.status != STATUS_READY, confirm_timeout, f"start {beverage}"
-        )
+        return await self.wait_for(self.profile.is_busy, confirm_timeout, f"start {beverage}")
+
+    async def wait_until_ready(self, *, timeout: float = 180.0) -> MachineState:
+        """Wait until the machine is ready and idle (after waking or a beverage)."""
+        return await self.wait_for(self.profile.is_ready, timeout, "ready")
 
     async def stop(self) -> None:
         await self.send(self.profile.command("stop"))
 
-    async def _wait_for(
+    async def wait_for(
         self, done: Callable[[MachineState], bool], timeout: float, what: str
     ) -> MachineState:
         deadline = time.monotonic() + timeout
@@ -165,6 +173,30 @@ class EcamDevice:
                 # No push: the machine may still be asleep or slow; ask actively.
                 with contextlib.suppress(CommandTimeout):
                     await self.refresh(timeout=min(5.0, max(remaining, 0.1)))
+
+    # --- background polling ------------------------------------------------------
+
+    def start_polling(self, *, awake: float = 3.0, asleep: float = 60.0) -> None:
+        """Keep ``state`` current by reading the monitor in the background."""
+        if self._poller is None:
+            self._poller = asyncio.create_task(self._poll(awake, asleep), name="aioecam-poll")
+
+    async def stop_polling(self) -> None:
+        if self._poller:
+            self._poller.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._poller
+            self._poller = None
+
+    async def _poll(self, awake: float, asleep: float) -> None:
+        while True:
+            if self.available:
+                try:
+                    await self.refresh(timeout=min(awake * 2, 10.0))
+                except EcamError as exc:
+                    _LOGGER.debug("monitor poll failed: %s", exc)
+            sleeping = self.state is None or self.state.status == STATUS_OFF
+            await asyncio.sleep(asleep if sleeping else awake)
 
     # --- statistics -----------------------------------------------------------
 

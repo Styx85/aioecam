@@ -1,8 +1,10 @@
 """A simulated ECAM machine behind a FakeDevice.
 
-Status sequences follow what an ECAM610.75 did on 2026-10-18:
-wake 0 -> 1 -> 7, standby 7 -> 2 -> 0. While off it pushes nothing and the
-module keeps answering with the frozen last frame.
+Behaviour follows what an ECAM610.75 did on 2026-10-18:
+wake 0 -> 1 -> 7, standby 7 -> 2 -> 0, and a beverage keeps status 7 while
+only action/progress change (espresso: actions 4, 6, 8, 9, 11, then 0).
+By default changes are NOT pushed; the new value is only seen on a read,
+which is what the real machine did in an aioecam session.
 """
 
 from __future__ import annotations
@@ -32,13 +34,14 @@ class FakeMachine:
         self.ignore_wakeup = False  # e.g. module without cloud after a long standby
         self.max_a2_page = 10  # firmware that times out on bigger pages answers nothing
         self.received: list[Frame] = []
+        self.push_changes = False
         device.properties[MONITOR] = monitor_value(0, action=2, progress=100)
         device.on_write = self._on_write
 
-    async def _set(self, status: int, *, push: bool = True) -> None:
+    async def _set(self, status: int, action: int = 0, progress: int = 0) -> None:
         self.status = status
-        self.device.properties[MONITOR] = monitor_value(status)
-        if push:
+        self.device.properties[MONITOR] = monitor_value(status, action, progress)
+        if self.push_changes:
             await self.device.push(MONITOR, self.device.properties[MONITOR])
 
     async def _on_write(self, name: str, value: str) -> None:
@@ -57,8 +60,9 @@ class FakeMachine:
             await asyncio.sleep(self.step)
             await self._set(0)
         elif frame.opcode == 0x83 and self.status == 7:
-            await self._set(3)  # dispensing
-            await asyncio.sleep(self.step)
+            for action, progress in ((4, 0), (8, 5), (11, 50), (11, 90)):
+                await self._set(7, action, progress)
+                await asyncio.sleep(self.step)
             await self._set(7)
         elif frame.opcode == OPCODE_STATISTICS:
             await self._answer_statistics(frame)

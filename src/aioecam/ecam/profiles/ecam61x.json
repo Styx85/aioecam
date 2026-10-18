@@ -15,6 +15,7 @@
     0,
     7
   ],
+  "ready_status": 7,
   "status": {
     "0": "in_standby",
     "1": "waking_up",

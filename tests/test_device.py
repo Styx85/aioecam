@@ -71,7 +71,7 @@ async def test_power_on_not_confirmed_times_out(rig: tuple[EcamDevice, FakeMachi
 async def test_power_off_confirmed(rig: tuple[EcamDevice, FakeMachine]) -> None:
     ecam, _ = rig
     await ecam.power_on(confirm_timeout=3)
-    await ecam._wait_for(lambda s: s.status == 7, 3, "ready")
+    await ecam.wait_until_ready(timeout=3)
     state = await ecam.power_off(confirm_timeout=3)
     assert state.status in (0, 2)
 
@@ -81,14 +81,6 @@ async def test_brew_requires_ready(rig: tuple[EcamDevice, FakeMachine]) -> None:
     with pytest.raises(CommandRejected, match="not ready"):
         await ecam.brew("espresso")
     assert not [f for f in machine.received if f.opcode == 0x83]
-
-
-async def test_brew_confirmed(rig: tuple[EcamDevice, FakeMachine]) -> None:
-    ecam, machine = rig
-    await ecam.power_on(confirm_timeout=3)
-    await ecam._wait_for(lambda s: s.status == 7, 3, "ready")
-    await ecam.brew("espresso", confirm_timeout=3)
-    assert machine.received[-1] == ecam.profile.command("espresso")
 
 
 async def test_unknown_beverage(rig: tuple[EcamDevice, FakeMachine]) -> None:
@@ -121,3 +113,55 @@ async def test_statistics_timeout_on_silent_machine(rig: tuple[EcamDevice, FakeM
     machine.max_a2_page = 0
     with pytest.raises(CommandTimeout):
         await ecam.read_statistics(page_timeout=0.2, retry_pause=0, page_size=2)
+
+
+async def test_brew_is_confirmed_although_status_stays_ready(
+    rig: tuple[EcamDevice, FakeMachine],
+) -> None:
+    ecam, machine = rig
+    machine.step = 0.4  # slow enough for the poller to see the running beverage
+    await ecam.power_on(confirm_timeout=5)
+    await ecam.wait_until_ready(timeout=5)
+    state = await ecam.brew("espresso", confirm_timeout=3)
+    assert machine.received[-1] == ecam.profile.command("espresso")
+    assert state.status == 7 and state.action != 0 and ecam.is_busy()
+    await ecam.wait_until_ready(timeout=5)
+    assert not ecam.is_busy()
+
+
+async def test_brew_refused_while_ready_but_busy(rig: tuple[EcamDevice, FakeMachine]) -> None:
+    ecam, machine = rig
+    machine.step = 0.5
+    await ecam.power_on(confirm_timeout=5)
+    await ecam.wait_until_ready(timeout=5)
+    await ecam.brew("espresso", confirm_timeout=3)
+    with pytest.raises(CommandRejected, match="action"):
+        await ecam.brew("espresso")
+
+
+async def test_polling_keeps_state_current_without_pushes(
+    rig: tuple[EcamDevice, FakeMachine],
+) -> None:
+    ecam, _ = rig
+    seen: list[int] = []
+    ecam.subscribe(lambda s: seen.append(s.status))
+    ecam.start_polling(awake=0.1, asleep=0.1)
+    try:
+        await ecam.send(ecam.profile.command("wakeup"))  # unconfirmed raw send
+        await ecam.wait_until_ready(timeout=3)
+        assert 1 in seen and seen[-1] == 7  # saw the wake-up sequence by polling alone
+    finally:
+        await ecam.stop_polling()
+
+
+async def test_pushes_are_used_when_the_machine_sends_them(
+    rig: tuple[EcamDevice, FakeMachine],
+) -> None:
+    ecam, machine = rig
+    machine.push_changes = True
+    await ecam.refresh()
+    seen: list[int] = []
+    ecam.subscribe(lambda s: seen.append(s.status))
+    await ecam.send(ecam.profile.command("wakeup"))
+    await ecam.wait_until_ready(timeout=3)
+    assert 1 in seen and 7 in seen
