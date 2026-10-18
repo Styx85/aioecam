@@ -15,6 +15,7 @@ import time
 from collections.abc import Callable
 from typing import Protocol
 
+from aioecam._util import remover as _remover
 from aioecam.ecam import commands
 from aioecam.ecam.frame import Frame
 from aioecam.ecam.monitor import MachineState
@@ -82,7 +83,7 @@ class EcamDevice:
 
     def subscribe(self, callback: StateCallback) -> Callable[[], None]:
         self._listeners.append(callback)
-        return lambda: self._listeners.remove(callback)
+        return _remover(self._listeners, callback)
 
     def is_busy(self) -> bool:
         return self.state is not None and self.profile.is_busy(self.state)

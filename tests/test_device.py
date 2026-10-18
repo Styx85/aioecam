@@ -220,3 +220,13 @@ async def test_wake_without_fallback_when_local_works(
     ecam, _, cloud = cloud_rig
     await ecam.power_on(confirm_timeout=5, local_grace=2)
     assert ecam.cloud_fallbacks == 0 and cloud.datapoints == []
+
+
+async def test_unsubscribe_twice_is_harmless(rig: tuple[EcamDevice, FakeMachine]) -> None:
+    ecam, _ = rig
+    unsubscribe = ecam.subscribe(lambda s: None)
+    unsubscribe()
+    unsubscribe()  # e.g. Home Assistant and the integration both shutting down
+    off = ecam.link.on_state(lambda s: None)
+    off()
+    off()

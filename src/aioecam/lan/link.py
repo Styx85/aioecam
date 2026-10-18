@@ -31,6 +31,7 @@ from typing import Any
 
 import aiohttp
 
+from aioecam._util import remover as _remover
 from aioecam.exceptions import CommandTimeout, NotConnected
 from aioecam.lan.crypto import LanSession, SessionError
 from aioecam.lan.messages import Datapoint, property_get, property_set
@@ -151,11 +152,11 @@ class LanLink:
         """Call ``callback`` for every datapoint (or only those named ``name``)."""
         entry = (name, callback)
         self._subscribers.append(entry)
-        return lambda: self._subscribers.remove(entry)
+        return _remover(self._subscribers, entry)
 
     def on_state(self, callback: StateCallback) -> Callable[[], None]:
         self._state_callbacks.append(callback)
-        return lambda: self._state_callbacks.remove(callback)
+        return _remover(self._state_callbacks, callback)
 
     async def write(self, name: str, value: str, *, timeout: float = 10.0) -> None:
         """Write a property; returns once the machine has fetched it."""
