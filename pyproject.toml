@@ -49,6 +49,8 @@ extend-exclude = ["docs"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "ASYNC", "SIM", "RUF"]
+# Explicit per-call timeouts are part of the public API (friendlier for Home Assistant).
+ignore = ["ASYNC109"]
 
 [tool.mypy]
 strict = true
