@@ -27,6 +27,7 @@ from aioecam.ecam.answers import (
     parse_recipe,
     parse_write_ack,
 )
+from aioecam.ecam.catalog import PassiveCatalog
 from aioecam.ecam.frame import RESPONSE, Frame
 from aioecam.ecam.monitor import MachineState
 from aioecam.ecam.profile import Profile
@@ -94,6 +95,16 @@ class EcamDevice:
         self._app_id = app_id
         self._cloud = cloud
         self._session_at = 0.0
+        self.catalog = PassiveCatalog()
+        self.machine_info: dict[str, str | int] = {}
+        self.last_datapoint_at: float | None = None
+        self.last_monitor_at: float | None = None
+        self.monitor_query_started_at: float | None = None
+        self.monitor_query_finished_at: float | None = None
+        self.monitor_query_result: str | None = None
+        self.monitor_query_error: str | None = None
+        self.last_monitor_error_at: float | None = None
+        self.last_monitor_error: str | None = None
         self.cloud_fallbacks = 0  # diagnostics: how often the cloud had to step in
         self._poll_interval = poll_interval
         self.state: MachineState | None = None
@@ -123,10 +134,32 @@ class EcamDevice:
         return self.state is not None and self.profile.is_busy(self.state)
 
     async def refresh(self, *, timeout: float = 10.0) -> MachineState:
-        point = await self.link.read(self.profile.monitor_property, timeout=timeout)
-        self._on_monitor(point)  # also delivered via subscription; idempotent
-        assert self.state is not None
-        return self.state
+        self.monitor_query_started_at = time.time()
+        self.monitor_query_finished_at = None
+        self.monitor_query_result = "in_progress"
+        self.monitor_query_error = None
+        try:
+            point = await self.link.read(self.profile.monitor_property, timeout=timeout)
+            # Validate this response independently: an old state must never turn
+            # a malformed response into a successful monitor query.
+            if not isinstance(point.value, str):
+                raise FrameError("monitor is not a frame value")
+            MachineState.from_value(point.value)
+            self._on_monitor(point)
+            self.monitor_query_result = "response_received"
+            assert self.state is not None
+            return self.state
+        except asyncio.CancelledError:
+            self.monitor_query_result = "cancelled"
+            raise
+        except Exception as exc:
+            self.monitor_query_result = "failed"
+            self.monitor_query_error = type(exc).__name__
+            self.last_monitor_error_at = time.time()
+            self.last_monitor_error = self.monitor_query_error
+            raise
+        finally:
+            self.monitor_query_finished_at = time.time()
 
     def _on_monitor(self, point: Datapoint) -> None:
         if not isinstance(point.value, str):
@@ -136,6 +169,7 @@ class EcamDevice:
         except FrameError as exc:
             _LOGGER.debug("ignoring undecodable monitor value: %s", exc)
             return
+        self.last_monitor_at = time.time()
         if state == self.state:
             return
         self.state = state
@@ -147,6 +181,17 @@ class EcamDevice:
                 _LOGGER.exception("state callback failed")
 
     def _on_response(self, point: Datapoint) -> None:
+        self.last_datapoint_at = time.time()
+        self.catalog.observe(point.name, point.value, self.last_datapoint_at)
+        if point.name in {
+            "d560_versione_sw",
+            "d561_machine_model",
+            "d562_versione_sw_ui",
+            "software_version",
+        } and (isinstance(point.value, (str, int)) and not isinstance(point.value, bool)):
+            self.machine_info[point.name] = (
+                point.value[:256] if isinstance(point.value, str) else point.value
+            )
         if not self._responses or not isinstance(point.value, str):
             return
         try:
