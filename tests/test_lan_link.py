@@ -190,3 +190,18 @@ async def test_close_fails_pending_work(server: LanServer) -> None:
     with pytest.raises(NotConnected):
         await pending
     assert link.state is LinkState.CLOSED
+
+
+async def test_module_without_cloud_refuses_lan_mode(
+    server: LanServer, device: FakeDevice, caplog: pytest.LogCaptureFixture
+) -> None:
+    device.lan_enabled = False
+    link = link_to(server, device)
+    await eventually(lambda: device.registrations.count("POST") >= 3)
+    assert link.state is not LinkState.ACTIVE
+    assert link.stats.last_registration_status == 404
+    warnings = [r for r in caplog.records if "refuses LAN mode" in r.getMessage()]
+    assert len(warnings) == 1  # logged once, not on every retry
+    device.lan_enabled = True  # cloud is back
+    await connected(link, device)
+    assert link.stats.last_registration_status == 202

@@ -42,6 +42,9 @@ class FakeDevice:
         self.registrations: list[str] = []  # "POST" / "PUT"
         self.key_exchanges = 0
         self.responsive = True  # False: accepts local_reg but never calls back
+        # False: module restarted without cloud; no DSN in regtoken.json, local_reg -> 404
+        self.lan_enabled = True
+        self.dsn = "AC000W000000001"
         self.port = 0
         self._session: LanSession | None = None
         self._target: str | None = None
@@ -53,6 +56,7 @@ class FakeDevice:
     async def start(self) -> None:
         app = web.Application()
         app.router.add_route("*", "/local_reg.json", self._local_reg)
+        app.router.add_get("/regtoken.json", self._regtoken)
         self._runner = web.AppRunner(app, access_log=None)
         await self._runner.setup()
         site = web.TCPSite(self._runner, self.ip, 0)
@@ -86,10 +90,22 @@ class FakeDevice:
 
     # --- protocol ---------------------------------------------------------------
 
+    async def _regtoken(self, request: web.Request) -> web.Response:
+        # Real module answers like this (text/html content type on some firmware).
+        if self.lan_enabled:
+            data = {"regtoken": "f3af0e", "registered": 1, "registration_type": "AP-Mode",
+                    "host_symname": self.dsn}  # fmt: skip
+        else:
+            data = {"regtoken": None, "registered": 1, "registration_type": "",
+                    "host_symname": ""}  # fmt: skip
+        return web.json_response(data)
+
     async def _local_reg(self, request: web.Request) -> web.Response:
         body = await request.json()
         reg = body["local_reg"]
         self.registrations.append(request.method)
+        if not self.lan_enabled:
+            return web.Response(status=404)
         self._target = f"http://{reg['ip']}:{reg['port']}{reg['uri']}"
         if not self.responsive:
             return web.Response(status=202)

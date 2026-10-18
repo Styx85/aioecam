@@ -53,6 +53,10 @@ class LinkStats:
     key_exchanges: int = 0
     liveness_failures: int = 0
     rejected_messages: int = 0
+    # HTTP status of the last local_reg; None if the machine was unreachable.
+    # 404 means the Wi-Fi module refuses LAN mode, seen after a module restart
+    # without cloud connectivity (regtoken.json then has an empty host_symname).
+    last_registration_status: int | None = None
     last_key_exchange: float | None = None
     last_contact: float | None = None
 
@@ -280,15 +284,21 @@ class LanLink:
             async with self._http.request(
                 method, self._url, json=body, timeout=aiohttp.ClientTimeout(total=5)
             ) as resp:
-                ok = 200 <= resp.status < 300
-                if not ok:
-                    _LOGGER.debug(
-                        "%s: %s local_reg -> HTTP %s", self.device_ip, method, resp.status
-                    )
-                return ok
+                status = resp.status
         except (aiohttp.ClientError, TimeoutError) as exc:
             _LOGGER.debug("%s: %s local_reg failed: %s", self.device_ip, method, exc)
+            self.stats.last_registration_status = None
             return False
+        if status == 404 and self.stats.last_registration_status != 404:
+            _LOGGER.warning(
+                "%s: Wi-Fi module refuses LAN mode (HTTP 404). It usually needs a cloud "
+                "connection after a restart; check that it can reach the internet",
+                self.device_ip,
+            )
+        elif not 200 <= status < 300:
+            _LOGGER.debug("%s: %s local_reg -> HTTP %s", self.device_ip, method, status)
+        self.stats.last_registration_status = status
+        return 200 <= status < 300
 
     async def _register(self) -> bool:
         self._set_state(LinkState.REGISTERING)
