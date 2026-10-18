@@ -93,7 +93,11 @@ class FakeMachine:
         elif frame.opcode == 0x95:
             param = int.from_bytes(frame.payload[:2], "big")
             value = self.settings.get(param, 0)
-            await self._respond(0x95, 0xF0, frame.payload[:2] + value.to_bytes(4, "big"))
+            # Measured on the Soul: republished into its own property, not data_response.
+            reply = encode_value(
+                Frame(RESPONSE, 0x95, 0xF0, frame.payload[:2] + value.to_bytes(4, "big"))
+            )
+            await self.device.push(f"d{param:03d}_mchn_sett", reply)
         elif frame.opcode == 0x90:
             param = int.from_bytes(frame.payload[:2], "big")
             if self._session_open():  # without a session the write is silently dropped
@@ -109,8 +113,8 @@ class FakeMachine:
             await self.device.push(RESPONSE_PROP, self.profile_names_value)
         elif frame.opcode == 0xA6:
             key = (frame.payload[0], frame.payload[1])
-            if key in self.recipes:
-                await self.device.push(RESPONSE_PROP, self.recipes[key])
+            if key in self.recipes:  # republished, e.g. d039_1_rec_espresso
+                await self.device.push(f"d0xx_{key[0]}_rec_{key[1]}", self.recipes[key])
 
     async def _answer_statistics(self, request: Frame) -> None:
         start = int.from_bytes(request.payload[:2], "big")

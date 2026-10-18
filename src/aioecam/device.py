@@ -27,7 +27,7 @@ from aioecam.ecam.answers import (
     parse_recipe,
     parse_write_ack,
 )
-from aioecam.ecam.frame import Frame
+from aioecam.ecam.frame import RESPONSE, Frame
 from aioecam.ecam.monitor import MachineState
 from aioecam.ecam.profile import Profile
 from aioecam.ecam.settings import SETTINGS, Setting
@@ -102,8 +102,11 @@ class EcamDevice:
         self._responses: list[asyncio.Queue[Frame]] = []
         self._poller: asyncio.Task[None] | None = None
         link.subscribe(self._on_monitor, name=profile.monitor_property)
-        if "data_response" in profile.properties:
-            link.subscribe(self._on_response, name=profile.properties["data_response"])
+        # Answers are routed by the echoed opcode, never by property name: the
+        # Soul answers A2 on data_response but republishes 0x95 settings and
+        # 0xA6 recipes into their own properties (d282_mchn_sett_aoff,
+        # d039_1_rec_espresso, ...), measured live.
+        link.subscribe(self._on_response)
 
     # --- state -------------------------------------------------------------
 
@@ -143,12 +146,14 @@ class EcamDevice:
                 _LOGGER.exception("state callback failed")
 
     def _on_response(self, point: Datapoint) -> None:
-        if not isinstance(point.value, str):
+        if not self._responses or not isinstance(point.value, str):
             return
         try:
             frame = decode_value(point.value).frame
         except FrameError:
-            return
+            return  # not a frame-carrying property (timestamps, versions, ...)
+        if frame.direction != RESPONSE:
+            return  # e.g. echoes of our own data_request
         for queue in self._responses:
             queue.put_nowait(frame)
 
@@ -271,11 +276,9 @@ class EcamDevice:
     ) -> T:
         """Send ``frame`` and return the first answer ``accept`` maps to a result.
 
-        Answers arrive as ``data_response`` datapoints. ``0xE1`` means the
-        machine was busy and dropped the request.
+        Answers arrive as datapoints of any property (see ``__init__``).
+        ``0xE1`` means the machine was busy and dropped the request.
         """
-        if "data_response" not in self.profile.properties:
-            raise EcamError(f"{self.profile.family} has no known data_response property")
         queue: asyncio.Queue[Frame] = asyncio.Queue()
         self._responses.append(queue)
         try:
