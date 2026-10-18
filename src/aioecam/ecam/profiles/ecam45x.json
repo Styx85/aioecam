@@ -1,0 +1,156 @@
+{
+  "family": "ecam45x",
+  "models": [
+    "ECAM450",
+    "ECAM452"
+  ],
+  "source": "converted from cremalink (https://github.com/miditkl/cremalink) devices/ECAM452.json @ 71c68fa, AGPL-3.0",
+  "properties": {
+    "app_id": "app_id",
+    "data_request": "app_data_request",
+    "device_connected": "app_device_connected",
+    "monitor": "d302_monitor_machine"
+  },
+  "idle_status": [
+    0,
+    7
+  ],
+  "status": {
+    "0": "in_standby",
+    "1": "waking_up",
+    "2": "going_to_sleep",
+    "4": "descaling",
+    "5": "preparing_steam",
+    "7": "ready",
+    "8": "rinsing",
+    "10": "preparing_milk",
+    "11": "dispensing_hot_water",
+    "12": "cleaning_milk",
+    "14": "rinsing_water_filter",
+    "16": "preparing_chocolate",
+    "17": "preparing_milk_alt",
+    "29": "unknown_29"
+  },
+  "accessory": {
+    "0": "none",
+    "1": "hot_water_spout",
+    "2": "latte_crema_hot",
+    "3": "chocolate",
+    "4": "latte_crema_hot_clean",
+    "6": "latte_crema_cool",
+    "7": "latte_crema_cool_clean"
+  },
+  "flags": {
+    "is_milk_fridge_warning": {
+      "bit": 0,
+      "byte": 1,
+      "source": "switches"
+    },
+    "is_waste_container_full": {
+      "bit": 1,
+      "byte": 0,
+      "source": "alarms"
+    },
+    "is_waste_container_missing": {
+      "bit": 3,
+      "byte": 0,
+      "source": "switches"
+    },
+    "is_watertank_empty": {
+      "bit": 0,
+      "byte": 0,
+      "source": "alarms"
+    },
+    "is_watertank_open": {
+      "bit": 5,
+      "byte": 1,
+      "source": "alarms"
+    }
+  },
+  "commands": {
+    "americano": {
+      "label": "Americano",
+      "frame": "0d1483f006010100280f006e1b010203040006ecfe"
+    },
+    "caffe_latte": {
+      "label": "Caffé Latte",
+      "frame": "0d1683f009011c0201003c1b01020309017c040006649e"
+    },
+    "cappuccino": {
+      "label": "Cappuccino",
+      "frame": "0d1683f007011c0201004e1b0202040900cc040006f563"
+    },
+    "cappuccino_mix": {
+      "label": "Cappuccino Mix",
+      "frame": "0d1883f00f010c011c020100321b0402030900f704000ad9f8"
+    },
+    "cappuccino_plus": {
+      "label": "Cappuccino+",
+      "frame": "0d1483f00d011c020100781b020900b40400067a44"
+    },
+    "coffee": {
+      "label": "Coffee",
+      "frame": "0d1183f002011b040100f002030400060ab7"
+    },
+    "cortado": {
+      "label": "Cortado",
+      "frame": "0d1883f018010c011c020100301b0202030900300400060a84"
+    },
+    "doppio_plus": {
+      "label": "Doppio Plus",
+      "frame": "0d0f83f005020100601b00040006138e"
+    },
+    "double_espresso": {
+      "label": "Double Espresso",
+      "frame": "0d0883f00401062342"
+    },
+    "espresso": {
+      "label": "Espresso",
+      "frame": "0d1183f0010101007e1b030202040006afe2"
+    },
+    "espresso_macchiato": {
+      "label": "Espresso Macchiato",
+      "frame": "0d1683f00b011c0201001e1b0102030900280400065a08"
+    },
+    "espresso_soul": {
+      "label": "Espresso Soul",
+      "frame": "0d0d83f0c80101003c1b04064270"
+    },
+    "flat_white": {
+      "label": "Flat White",
+      "frame": "0d1883f00a010c011c0201003c1b0102030900dc0400068393"
+    },
+    "hot_milk": {
+      "label": "Hot Milk",
+      "frame": "0d0f83f00c011c020901201b00061de5"
+    },
+    "hot_water": {
+      "label": "Hot Water",
+      "frame": "0d0d83f010010f00fa1b01068124"
+    },
+    "latte_macchiato": {
+      "label": "Latte Macchiato",
+      "frame": "0d1683f008011c020100481b02020209015c0400063cc2"
+    },
+    "long_coffee": {
+      "label": "Long Coffee",
+      "frame": "0d1183f003010100a01b010203040006fc08"
+    },
+    "refresh": {
+      "label": "Refresh App ID",
+      "frame": "0d07840f03025640"
+    },
+    "standby": {
+      "label": "Turn Off",
+      "frame": "0d07840f01010041"
+    },
+    "stop": {
+      "label": "Stop",
+      "frame": "0d0d83f010020f00fa1b010659a6"
+    },
+    "wakeup": {
+      "label": "Turn On",
+      "frame": "0d07840f02015512"
+    }
+  }
+}
