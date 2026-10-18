@@ -99,7 +99,8 @@ class EcamDevice:
         self.state: MachineState | None = None
         self._listeners: list[StateCallback] = []
         self._changed = asyncio.Event()
-        self._responses: list[asyncio.Queue[Frame]] = []
+        self._responses: list[asyncio.Queue[tuple[Frame, str]]] = []
+        self._answer_properties: dict[Frame, str] = {}
         self._poller: asyncio.Task[None] | None = None
         link.subscribe(self._on_monitor, name=profile.monitor_property)
         # Answers are routed by the echoed opcode, never by property name: the
@@ -155,7 +156,7 @@ class EcamDevice:
         if frame.direction != RESPONSE:
             return  # e.g. echoes of our own data_request
         for queue in self._responses:
-            queue.put_nowait(frame)
+            queue.put_nowait((frame, point.name))
 
     # --- commands ------------------------------------------------------------
 
@@ -272,24 +273,44 @@ class EcamDevice:
     # --- statistics -----------------------------------------------------------
 
     async def _exchange(
-        self, frame: Frame, accept: Callable[[Frame], T | None], *, timeout: float, what: str
+        self,
+        frame: Frame,
+        accept: Callable[[Frame], T | None],
+        *,
+        timeout: float,
+        what: str,
+        poll_answer: bool = False,
     ) -> T:
         """Send ``frame`` and return the first answer ``accept`` maps to a result.
 
         Answers arrive as datapoints of any property (see ``__init__``).
         ``0xE1`` means the machine was busy and dropped the request.
         """
-        queue: asyncio.Queue[Frame] = asyncio.Queue()
+        queue: asyncio.Queue[tuple[Frame, str]] = asyncio.Queue()
         self._responses.append(queue)
         try:
             await self.send(frame, timeout=timeout)
             async with asyncio.timeout(timeout):
                 while True:
-                    answer = await queue.get()
+                    if poll_answer:
+                        try:
+                            answer, name = await asyncio.wait_for(queue.get(), 0.5)
+                        except TimeoutError:
+                            # The module can retain an answer without republishing it.
+                            # Learn the property from a successful answer, not its value.
+                            name = self._answer_properties.get(
+                                frame, self.profile.properties["data_response"]
+                            )
+                            with contextlib.suppress(CommandTimeout):
+                                await self.link.read(name, timeout=1.0)
+                            continue
+                    else:
+                        answer, name = await queue.get()
                     if is_sync_timeout(answer):
                         raise CommandRejected(f"machine busy, {what} aborted (0xE1)")
                     result = accept(answer)
                     if result is not None:
+                        self._answer_properties[frame] = name
                         return result
         except TimeoutError:
             raise CommandTimeout(f"no answer for {what} within {timeout}s") from None
@@ -397,10 +418,15 @@ class EcamDevice:
         def accept(frame: Frame) -> tuple[int, bool] | None:
             if frame.opcode != commands.OPCODE_PROFILE_SELECT:
                 return None
-            return parse_profile_select_ack(frame)
+            acked, ok = parse_profile_select_ack(frame)
+            return (acked, ok) if acked == slot else None
 
         acked, ok = await self._exchange(
-            commands.profile_select(slot), accept, timeout=timeout, what=f"profile {slot}"
+            commands.profile_select(slot),
+            accept,
+            timeout=timeout,
+            what=f"profile {slot}",
+            poll_answer=True,
         )
         if not ok or acked != slot:
             raise CommandRejected(f"machine refused profile {slot} (ack for {acked}, ok={ok})")
@@ -462,7 +488,7 @@ class EcamDevice:
 
         return await self._exchange(
             commands.read_recipe(slot, beverage_id), accept, timeout=timeout,
-            what=f"recipe {beverage} (profile {slot})",
+            what=f"recipe {beverage} (profile {slot})", poll_answer=True,
         )  # fmt: skip
 
     async def brew_custom(

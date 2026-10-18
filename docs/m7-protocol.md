@@ -1,9 +1,9 @@
 # M7: settings, profiles, recipes and monitor requests
 
-This note describes the implementation on `feat/m7-ecam-commands` and the
-handoff from the earlier PrimaDonna Soul ECAM610.75 test session. The live
-results below were reported in that handoff; they have not been repeated in
-this cloud environment. Codec tests and fake-device tests are separate evidence.
+This note describes the implementation on `feat/m7-ecam-commands`, the earlier
+PrimaDonna Soul ECAM610.75 handoff, and the local hardware follow-up on
+2026-10-18. Codec tests, fake-device tests and hardware measurements are
+separate evidence.
 
 ## Answer routing
 
@@ -24,6 +24,27 @@ machine aborted a request while busy; it is not a successful answer.
 Settings and recipes were readable while the machine was in standby even
 though the monitor value remained unchanged. A live LAN session therefore
 does not imply that the control board produces current monitor data.
+
+The local follow-up exposed two additional behaviours:
+
+- A profile command can leave its acknowledgement in `data_response` without
+  publishing it to the client. Reading the property retrieves it. An initial
+  read can still return the previous slot's acknowledgement: selecting slot 2
+  produced `d007a9f001003b3c` before `d007a9f002006e6f`. Ignore acknowledgements
+  for other slots instead of reporting them as rejection of this command.
+- A second identical recipe query timed out after the first succeeded. For
+  repeated recipe reads, remember the property that carried a matching answer
+  and read that property if no answer arrives. Cache the property name, not
+  the recipe value. On a new device object, the first successful answer is
+  still needed to learn a recipe's property; there is no complete static
+  recipe-property map. The cause of the missing second publication remains
+  unproven.
+
+Profile selection and recipe reads use bounded property polling after 0.5 s
+without an answer, within the command timeout. Unrelated frames are still
+filtered by opcode, profile slot and beverage ID. Acknowledgements in the
+module are cached state, not a transaction nonce; a cached acknowledgement
+alone cannot establish when the control board acted.
 
 ## Implemented operations
 
@@ -66,10 +87,52 @@ Eletta live validation is claimed.
   hot-water recipe 250 ml, temperature raw 1.
 - Part B: wake succeeded, ready after approximately 35 seconds; three profiles
   were read and a monitor request completed.
-- While awake: alarms `00` and accessory `none` were reported. Changes caused
-  by moving the tank and milk accessory remain unverified.
-- Part C setting writes, profile switching and custom-volume hot water remain
-  unverified on hardware.
+- While awake: alarms `00` and accessory `none` were reported. The remaining
+  physical-change and write checks were completed locally below.
+
+## Local hardware follow-up, 2026-10-18
+
+Times below are Europe/Berlin (UTC+02:00). The operator confirmed that the HA
+integration was disabled and performed the physical changes. The existing
+private LAN key worked; no new cloud login or cloud wake fallback was used.
+
+| Check | Observation | Result / limits |
+| --- | --- | --- |
+| Standby monitor | Cached and requested: status `0`, accessory `4`, switches `4002`, alarms `01000000`, unchanged timestamp | A frozen prior frame, not evidence of current tank or accessory state |
+| LAN wake | Connected 22:07:59, waking at 22:08:03, ready at 22:08:32 | Approximately 33 s from connection to ready; no alarm |
+| Tank removal | 22:08:58: switches `1000`, alarms `00200000` | Change detected while awake |
+| Tank replacement | 22:09:14: switches `0000`, alarms `00000000` | Alarm cleared |
+| Milk accessory attached | 22:09:54: accessory `2` (`latte_crema_hot`), switches `0001` | Correct accessory recognised |
+| Milk accessory removed | 22:10:17: accessory `0`, switches `0000` | Returned to no accessory; no alarm |
+| Auto-off write | Read `0` (15 min), wrote/read back `1` (30 min) at 22:11:02 | Write confirmed by machine acknowledgement and readback; display not independently confirmed |
+| Auto-off restoration | Wrote/read back `0` at 22:11:05 | Original 15-minute value restored in `finally` |
+| Profile switch | Slot 2 acknowledged 22:12:56, slot 1 acknowledged 22:13:00 | Operator also confirmed the `1 → 2 → 1` sequence on the display; test script polled and matched the requested slot |
+| Custom hot water | Sent `0d0d83f010010f00641b0106e5e1` at 22:16:20; dispensing status `11`; ready at 22:17:03 | One 100 ml command, no alarm; operator confirmed approximately 100 ml in the container |
+| Recipe preservation | Hot-water recipe before and after: water `250`, temperature `1`, tag `0x19` = `1` | The one-off 100 ml command did not change the saved recipe |
+
+The live hot-water test used the successfully read recipe directly with
+`commands.brew`, `send` and monitor confirmation after `brew_custom`'s second
+recipe read timed out **before** sending any beverage command. The final
+recipe-polling implementation is regression-tested with the fake machine;
+it has not been rerun through `brew_custom` on hardware. No additional drink
+was dispensed for software verification.
+
+The tank/accessory measurement alternated a normal monitor-property read
+with an explicit monitor request, about every 2–3 seconds. These results prove
+that awake changes are observable with polling. They do **not** establish
+whether changes would be pushed unsolicited, nor whether explicit monitor
+requests are necessary compared with plain property reads. Those comparisons
+remain open.
+
+For this Soul, hot water comes from the central coffee/hot-water outlet
+(`A14`); an attachable hot-water nozzle is not required. Accessory `0` must
+not block hot water. The protocol trailer's accessory bits are preserved
+from the stored command and are not the monitor's accessory enum. See the
+manufacturer's [manual, sections 2.1 and 13](https://dls.delonghigroup.com/files/docs/5/EN-57132C8859.pdf).
+
+The test LAN server was closed after completion. The operator was told to
+reactivate HA; HA reactivation and subsequent HA state delivery have not been
+verified here.
 
 ## Resume the live checks
 
