@@ -8,7 +8,8 @@
   "source": "converted from cremalink (https://github.com/miditkl/cremalink) devices/ECAM610.json @ 71c68fa, AGPL-3.0",
   "properties": {
     "data_request": "data_request",
-    "monitor": "d302_monitor"
+    "monitor": "d302_monitor",
+    "data_response": "data_response"
   },
   "idle_status": [
     0,
