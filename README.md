@@ -15,6 +15,9 @@ Eletta Explore (ECAM452).
 > milestones. The protocol findings this library is built on are documented
 > publicly in [ecam-lan-protocol.md](https://github.com/Styx85/cremalink-ha/blob/main/docs/ecam-lan-protocol.md).
 
+Settings, profiles and recipe extensions, their validation status, and the
+remaining hardware checks are documented in [M7 protocol notes](docs/m7-protocol.md).
+
 ## Command line
 
 ```bash
