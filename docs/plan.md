@@ -1,6 +1,6 @@
 # aioecam – Architektur- und Umsetzungsplan
 
-Stand: 2026-10-18 (M0–M3 erledigt) · Ziel: eigene async Python-Library für De'Longhi ECAM
+Stand: 2026-10-18 (M0–M4 erledigt) · Ziel: eigene async Python-Library für De'Longhi ECAM
 (Coffee Link / Ayla) plus eine HACS-Integration **ohne Add-on**. Local first,
 Cloud nur für Onboarding und als Fallback.
 
