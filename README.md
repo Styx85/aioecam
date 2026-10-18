@@ -15,8 +15,24 @@ Eletta Explore (ECAM452).
 > milestones. The protocol findings this library is built on are documented
 > publicly in [ecam-lan-protocol.md](https://github.com/Styx85/cremalink-ha/blob/main/docs/ecam-lan-protocol.md).
 
-Settings, profiles and recipe extensions, their Soul hardware validation,
-and remaining limitations are documented in [M7 protocol notes](docs/m7-protocol.md).
+## Hardware validation
+
+Live testing has been performed on a **PrimaDonna Soul ECAM610.75**. Verified
+operations include LAN wake-up, settings and recipe reads, tank and milk
+accessory monitoring while awake, auto-off writes with restoration, profile
+switching, and a one-off 100 ml hot-water command.
+
+**Other models have not been tested on hardware by this project.** This
+includes other ECAM610/612/613 variants and the Eletta Explore (ECAM452).
+Their coverage is limited to codec, captured-frame and simulated-device tests;
+passing these tests does not confirm that they work on a real machine.
+Model-specific behaviour needs confirmation from owners of those machines.
+Eletta write sessions are not implemented.
+
+Not every code path has been verified live, even on the ECAM610.75: the final
+recipe-polling fix is covered by simulated-device tests, and whether monitor
+changes require polling remains open. Detailed results and limitations are
+documented in the [M7 protocol notes](docs/m7-protocol.md).
 
 ## Command line
 
