@@ -44,9 +44,17 @@ def parse_ranges(payload: bytes) -> dict[int, dict[str, int]]:
             int.from_bytes(payload[start + i * width : start + (i + 1) * width], "big")
             for i in range(3)
         )
-        if not low <= default <= high:
+        if low > high:
             raise FrameError("inconsistent descriptor bounds")
-        result[tag] = {"min": low, "default": default, "max": high}
+        # Real Soul descriptors use 0 / 255 outside the reported bounds.
+        # Preserve the raw default without inventing its meaning or allowing
+        # it to be treated as a confirmed usable parameter value.
+        result[tag] = {
+            "min": low,
+            "default": default,
+            "max": high,
+            "default_in_range": low <= default <= high,
+        }
         offset = end
     return result
 
