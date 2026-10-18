@@ -69,6 +69,17 @@ def test_interpret_prefers_machine_total() -> None:
     assert snap.known["total_beverages"] == 99
 
 
+def test_soul_hot_water_counter_matches_live_increment() -> None:
+    # Operator-confirmed ECAM610.75 result for a 100 ml beverage-0x10 command.
+    before = interpret("ecam61x", {3018: 0, 3019: 2})
+    raw_after = {3018: 0, 3019: 3}
+    after = interpret("ecam61x", raw_after)
+    assert after.known["hot_water"] - before.known["hot_water"] == 1
+    assert "tea" not in after.known
+    assert after.unknown == {3018: 0}
+    assert after.raw == raw_after
+
+
 def test_interpret_unmapped_family_keeps_everything_unknown() -> None:
     snap = interpret("ecam45x", {100: 5, 3005: 7})
     assert snap.known == {} and snap.unknown == {100: 5, 3005: 7}
