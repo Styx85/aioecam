@@ -237,5 +237,5 @@ Do not infer the current machine state from the earlier handoff.
 The ECAM extensions were ported from [lodzen/cremalink](https://github.com/lodzen/cremalink)
 (AGPL-3.0); its recipe/TLV grammar credits actabi's `delonghi_coffeelink` (MIT).
 The reported upstream discussion is [lodzen/cremalink#4](https://github.com/lodzen/cremalink/issues/4).
-See [the protocol notes](https://github.com/Styx85/cremalink-ha/blob/main/docs/ecam-lan-protocol.md)
+See [the protocol notes](https://github.com/Styx85/cremaevolution-ha/blob/main/docs/ecam-lan-protocol.md)
 for the earlier LAN measurements.
