@@ -69,11 +69,27 @@ Known settings:
 - Auto-off: parameter `0x003E`, values `0/1/2/3` = 15 min / 30 min / 1 h / 3 h.
 - Water hardness: parameter `0x0032`, values `0..3` = displayed levels 1..4.
 
-Recipes are scoped to a profile slot. Known tags include coffee volume
-(`0x01`), intensity (`0x02`), milk (`0x09`), water volume (`0x0F`) and
-temperature (`0x1B`). Preserve the recipe order, apply the app's tag filtering,
-and retain the model's accessory bits. Temperature and intensity are raw
-protocol values, not degrees Celsius or universal display scales. The tests
+Recipes are scoped to a profile slot. Tag names follow the parameter enum of
+the Coffee Link app 4.9.6 (static analysis, 2026-10-19): `0x00` TEMP,
+`0x01` coffee, `0x02` TASTE (aroma/strength step), `0x08` double, `0x09` milk,
+`0x0D` tea temperature, `0x0F` hot water, `0x18` programmable, `0x19` visible,
+`0x1A` visible in programming, `0x1B` INDEX_LENGTH, `0x1C` accessory.
+Preserve the recipe order, apply the app's tag filtering, and retain the
+model's accessory bits. All values are raw protocol values, not degrees
+Celsius or universal display scales.
+
+**Correction (2026-10-19):** `0x1B` was earlier documented here and exported
+by aioecam as *temperature*. The app names it `INDEX_LENGTH`, a size index
+(the app's size enum knows SMALL=0, MID=1, LARGE=2, NOT_SET=255; live values
+such as 4 do not fit it, so the exact meaning stays open). Measurements below
+that say "temperature" for `0x1B` report the raw value of that tag correctly;
+only the name was wrong. Temperatures are tags `0x00` and `0x0D`.
+
+Tag `0x19` (VISIBLE): the app hides recipes with `0` and, for normal
+beverages, shows an info page instead of a brew button for `2`. On the Soul,
+tea, coffee pot, mug to go and brew over ice carry `2`. This is app
+behaviour, not a proven firmware lock, and `1` does not guarantee that a
+beverage can be made with the installed hardware. The tests
 rebuild every stored beverage frame byte for byte for both model families.
 
 The Eletta codec includes a 22-byte profile-name entry and an `0xE8` handshake
@@ -83,8 +99,8 @@ Eletta live validation is claimed.
 ## Reported live results at handoff
 
 - Part A: auto-off raw `0` (15 min), water hardness raw `2` (level 3).
-- Part A: profile 1 espresso recipe 40 ml, temperature raw 1, intensity raw 4;
-  hot-water recipe 250 ml, temperature raw 1.
+- Part A: profile 1 espresso recipe 40 ml, tag `0x1B` raw 1, intensity raw 4;
+  hot-water recipe 250 ml, tag `0x1B` raw 1.
 - Part B: wake succeeded, ready after approximately 35 seconds; three profiles
   were read and a monitor request completed.
 - While awake: alarms `00` and accessory `none` were reported. The remaining
@@ -108,7 +124,7 @@ private LAN key worked; no new cloud login or cloud wake fallback was used.
 | Auto-off restoration | Wrote/read back `0` at 22:11:05 | Original 15-minute value restored in `finally` |
 | Profile switch | Slot 2 acknowledged 22:12:56, slot 1 acknowledged 22:13:00 | Operator also confirmed the `1 → 2 → 1` sequence on the display; test script polled and matched the requested slot |
 | Custom hot water | Sent `0d0d83f010010f00641b0106e5e1` at 22:16:20; dispensing status `11`; ready at 22:17:03 | One 100 ml command, no alarm; operator confirmed approximately 100 ml in the container |
-| Recipe preservation | Hot-water recipe before and after: water `250`, temperature `1`, tag `0x19` = `1` | The one-off 100 ml command did not change the saved recipe |
+| Recipe preservation | Hot-water recipe before and after: water `250`, tag `0x1B` = `1`, tag `0x19` = `1` | The one-off 100 ml command did not change the saved recipe |
 
 The live hot-water test used the successfully read recipe directly with
 `commands.brew`, `send` and monitor confirmation after `brew_custom`'s second
