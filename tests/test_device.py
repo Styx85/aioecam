@@ -50,13 +50,18 @@ async def test_refresh_reads_frozen_standby_frame(rig: tuple[EcamDevice, FakeMac
     assert not ecam.is_busy()
 
 
+def commands_sent(machine: FakeMachine) -> list[Any]:
+    """Frames sent to the machine, without the monitor requests used for polling."""
+    return [f for f in machine.received if not (f.opcode == 0x75 and not f.payload)]
+
+
 async def test_power_on_confirmed(rig: tuple[EcamDevice, FakeMachine]) -> None:
     ecam, machine = rig
     seen: list[MachineState] = []
     ecam.subscribe(seen.append)
     state = await ecam.power_on(confirm_timeout=3)
     assert state.status in (1, 7)
-    assert machine.received[-1].payload == b"\x02\x01"
+    assert commands_sent(machine)[-1].payload == b"\x02\x01"
     assert seen and seen[-1] == ecam.state
 
 
@@ -132,7 +137,7 @@ async def test_brew_is_confirmed_although_status_stays_ready(
     await ecam.power_on(confirm_timeout=5)
     await ecam.wait_until_ready(timeout=5)
     state = await ecam.brew("espresso", confirm_timeout=3)
-    assert machine.received[-1] == ecam.profile.command("espresso")
+    assert commands_sent(machine)[-1] == ecam.profile.command("espresso")
     assert state.status == 7 and state.action != 0 and ecam.is_busy()
     await ecam.wait_until_ready(timeout=5)
     assert not ecam.is_busy()
@@ -493,3 +498,58 @@ async def test_passive_diagnostics_identical_monitor_and_no_writes(
     assert ecam.monitor_query_result == "response_received"
     assert ecam.monitor_query_error is None
     assert ecam.last_monitor_error == "FrameError"  # retained after recovery
+
+
+async def test_request_monitor_waits_for_the_late_frame(
+    rig: tuple[EcamDevice, FakeMachine],
+) -> None:
+    # Measured offline (WAN blocked): no published changes; a 0x75 request
+    # publishes the current state 1-2 s after the module fetched it.
+    ecam, machine = rig
+    machine.publish_on_request_only = True
+    machine.publish_delay = 0.4
+    before = await ecam.refresh()
+    await machine._set(7)  # e.g. woken at the display: nothing is published
+    assert (await ecam.refresh()).status == 0
+    state = await ecam.request_monitor(timeout=2)
+    assert state.status == 7 and state.timestamp > before.timestamp
+    assert ecam.monitor_query_result == "response_received"
+
+
+async def test_request_monitor_without_new_frame_returns_latest(
+    rig: tuple[EcamDevice, FakeMachine],
+) -> None:
+    ecam, machine = rig
+    machine.publish_on_request_only = True
+    machine.publish_delay = 5.0  # later than our timeout
+    before = await ecam.refresh()
+    state = await ecam.request_monitor(timeout=0.3)
+    assert state == before and ecam.monitor_query_result == "no_new_frame"
+
+
+async def test_power_on_and_off_confirmed_by_the_offline_module(
+    rig: tuple[EcamDevice, FakeMachine],
+) -> None:
+    ecam, machine = rig
+    machine.publish_on_request_only = True
+    machine.publish_delay = 0.3
+    machine.step = 0.2
+    state = await ecam.power_on(confirm_timeout=5)
+    assert state.status in (1, 7)
+    await ecam.wait_until_ready(timeout=5)
+    state = await ecam.power_off(confirm_timeout=5)
+    assert state.status in (0, 2)
+    assert machine.monitor_requests >= 2
+
+
+async def test_cloud_fallback_not_used_when_offline_wake_worked(
+    cloud_rig: tuple[EcamDevice, FakeMachine, FakeCloud],
+) -> None:
+    # Before the fix the stale frame looked like "still asleep" and the cloud
+    # was asked to wake an already running machine.
+    ecam, machine, cloud = cloud_rig
+    machine.publish_on_request_only = True
+    machine.publish_delay = 0.3
+    state = await ecam.power_on(confirm_timeout=5, local_grace=2)
+    assert state.status in (1, 7)
+    assert ecam.cloud_fallbacks == 0 and cloud.datapoints == []

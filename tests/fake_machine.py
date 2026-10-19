@@ -21,9 +21,11 @@ MONITOR = "d302_monitor"
 RESPONSE_PROP = "data_response"
 
 
-def monitor_value(status: int, action: int = 0, progress: int = 0) -> str:
+def monitor_value(
+    status: int, action: int = 0, progress: int = 0, *, timestamp: int | None = None
+) -> str:
     payload = bytes([0, 0, 0, 0, 0, status, action, progress, 0, 0, 0, 0, 0])
-    return encode_value(Frame(RESPONSE, 0x75, 0x0F, payload))
+    return encode_value(Frame(RESPONSE, 0x75, 0x0F, payload), timestamp=timestamp)
 
 
 class FakeMachine:
@@ -44,12 +46,38 @@ class FakeMachine:
         self.profile_names_value: str | None = None
         self.recipes: dict[tuple[int, int], str] = {}
         self.monitor_requests = 0
-        device.properties[MONITOR] = monitor_value(0, action=2, progress=100)
+        # The module with its internet access blocked (measured 2026-10-19): state
+        # changes are not published; a 0x75 request publishes the current state
+        # ``publish_delay`` seconds after the module fetched the request.
+        self.publish_on_request_only = False
+        self.publish_delay = 0.0
+        self._published_ts = int(time.time())
+        self._current = (0, 2, 100)
+        self._tasks: set[asyncio.Task[None]] = set()
+        device.properties[MONITOR] = monitor_value(
+            0, action=2, progress=100, timestamp=int(time.time())
+        )
         device.on_write = self._on_write
+
+    def _publish(self) -> None:
+        # Strictly increasing payload timestamps, like the real module's seconds.
+        self._published_ts = max(int(time.time()), self._published_ts + 1)
+        self.device.properties[MONITOR] = monitor_value(
+            *self._current, timestamp=self._published_ts
+        )
+
+    async def _publish_later(self) -> None:
+        await asyncio.sleep(self.publish_delay)
+        self._publish()
+        if self.push_changes:
+            await self.device.push(MONITOR, self.device.properties[MONITOR])
 
     async def _set(self, status: int, action: int = 0, progress: int = 0) -> None:
         self.status = status
-        self.device.properties[MONITOR] = monitor_value(status, action, progress)
+        self._current = (status, action, progress)
+        if self.publish_on_request_only:
+            return
+        self._publish()
         if self.push_changes:
             await self.device.push(MONITOR, self.device.properties[MONITOR])
 
@@ -89,7 +117,11 @@ class FakeMachine:
             await self._answer_statistics(frame)
         elif frame.opcode == 0x75 and not frame.payload:
             self.monitor_requests += 1
-            await self.device.push(MONITOR, self.device.properties[MONITOR])
+            if self.publish_on_request_only:
+                self._tasks.add(task := asyncio.create_task(self._publish_later()))
+                task.add_done_callback(self._tasks.discard)
+            else:
+                await self.device.push(MONITOR, self.device.properties[MONITOR])
         elif frame.opcode == 0x95:
             param = int.from_bytes(frame.payload[:2], "big")
             value = self.settings.get(param, 0)
