@@ -86,7 +86,7 @@ def test_every_stored_beverage_rebuilds_byte_for_byte(family: str) -> None:
         p = frame.payload
         recipe = parse_tlv(p[2:-1])
         assert recipe is not None, name
-        built = commands.brew(p[0], recipe, slot=p[-1] >> 2, accessory=p[-1] & 3)
+        built = commands.brew(p[0], recipe, slot=p[-1] >> 2, operation=p[-1] & 3)
         assert built == frame, f"{name}: {built.encode().hex()} != {frame.encode().hex()}"
         rebuilt += 1
     assert rebuilt >= 15
@@ -94,7 +94,7 @@ def test_every_stored_beverage_rebuilds_byte_for_byte(family: str) -> None:
 
 def test_brew_from_machine_recipe_drops_what_the_app_drops() -> None:
     recipe = parse_recipe(frame_of(D039_RECIPE_ESPRESSO_P1))
-    built = commands.brew(recipe.beverage_id, recipe.params, slot=recipe.slot, accessory=2)
+    built = commands.brew(recipe.beverage_id, recipe.params, slot=recipe.slot)
     # tag 0x08 and tag 0x19 (25) are never sent; order follows the machine's recipe
     assert built.payload.hex() == "0101" + "010028" + "1b01" + "0204" + "0400" + "06"
 
@@ -159,3 +159,21 @@ def test_recipe_tag_names_follow_the_app() -> None:
     assert device.TAG_NAMES[device.TAG_TEMP] == "temperature" and device.TAG_TEMP == 0x00
     assert device.TAG_TEA_TEMP == 0x0D and device.TAG_VISIBLE == 0x19
     assert not hasattr(device, "TAG_TEMPERATURE")
+
+
+def test_stored_brew_frames_are_all_prepare() -> None:
+    from aioecam.ecam.profile import available_families, load_profile
+
+    for family in available_families():
+        for name, cmd in load_profile(family).commands.items():
+            if cmd.frame.opcode == commands.OPCODE_BREW:
+                assert cmd.frame.payload[-1] & 3 == commands.BrewOperation.PREPARE, name
+
+
+def test_brew_trailer_is_profile_and_operation() -> None:
+    frame = commands.brew(16, {0x0F: 100}, slot=1)
+    assert frame.payload[-1] == (1 << 2) | 2  # PREPARE, as the app sends it
+    save = commands.brew(16, {0x0F: 100}, slot=1, operation=commands.BrewOperation.SAVE)
+    assert save.payload[-1] == (1 << 2) | 1
+    with pytest.raises(ValueError):
+        commands.brew(16, {0x0F: 100}, slot=1, operation=6)  # inversion: not modelled
