@@ -168,6 +168,39 @@ invented, and `3018` is preserved as unknown/raw. The client did not collect
 a pre-brew A2 snapshot: the 2 → 3 delta is operator evidence rather than a
 saved pair of client snapshots. Other models still need owner confirmation.
 
+## Offline wake and monitor freshness, 2026-10-19
+
+Machine internet access blocked at the router, HA integration disabled,
+standby 5–13 min, one LAN client (`tools/wake_test.py`). Display times were
+noted by the operator.
+
+| Run | Wake/off frame fetched | Display | Fresh monitor frame |
+| --- | --- | --- | --- |
+| plain wake, property reads only | 21:09:30 | within seconds | none for 60 s |
+| `device_connected` first, reads only | 21:26:02 | 21:26 | none for 150 s |
+| `POST local_reg.json?dsn=…`, with 0x75 requests | 21:36:01 | 21:36:03 | 21:36:03 (`status 1`) |
+| off, with 0x75 requests | 21:37:33 | 21:37:36 | 21:37:36 (`status 2`) |
+| plain wake, with 0x75 requests | 21:43:01 | 21:43:02 | 21:43:03 (`status 1`) |
+
+Findings:
+
+- **Waking and switching off work locally without internet**, within about
+  2 s, with all three session variants. Neither `device_connected` nor the
+  `?dsn=` parameter is needed (both are accepted).
+- **Without internet the module does not publish state changes.** Reading
+  `d302_monitor` kept returning the frame from before the command, even
+  while the machine was rinsing or ready. A `0x75` monitor request makes the
+  module publish the current state, but the new frame lands about 1–2 s after
+  the module fetched the request; reading immediately still returns the old
+  frame. An unchanged state is not always republished.
+- Consequence (fixed in 0.1.0b9): `request_monitor()` waits for a frame with
+  a newer payload timestamp, and command confirmation and background polling
+  use it. Before, a working offline wake looked unconfirmed and the cloud
+  fallback was triggered for a machine that was already running. This is the
+  likely explanation of the earlier "wake without internet failed once".
+- Not yet measured: whether the module publishes changes by itself when it
+  can reach the cloud, and an offline wake after a long (overnight) standby.
+
 ## Resume the live checks
 
 Run from the LAN test host with the existing private key file and the machine

@@ -99,6 +99,15 @@ TAG_NAMES = {
 SESSION_REFRESH = 240.0
 
 
+def _newer(state: MachineState, before: MachineState | None) -> bool:
+    """True if ``state`` is a frame published after ``before``."""
+    if before is None:
+        return True
+    if state.timestamp is not None and before.timestamp is not None:
+        return state.timestamp > before.timestamp or state != before
+    return state != before
+
+
 class CloudWriter(Protocol):
     """What the wake fallback needs from a cloud client (``AylaCloud`` fits)."""
 
@@ -315,14 +324,15 @@ class EcamDevice:
             try:
                 await asyncio.wait_for(self._changed.wait(), min(self._poll_interval, remaining))
             except TimeoutError:
-                # No push: the machine may still be asleep or slow; ask actively.
+                # No push: ask for a fresh frame. A plain read is not enough; the
+                # module may keep serving the frame from before the command.
                 with contextlib.suppress(CommandTimeout):
-                    await self.refresh(timeout=min(5.0, max(remaining, 0.1)))
+                    await self.request_monitor(timeout=min(3.0, max(remaining, 0.1)))
 
     # --- background polling ------------------------------------------------------
 
     def start_polling(self, *, awake: float = 3.0, asleep: float = 60.0) -> None:
-        """Keep ``state`` current by reading the monitor in the background."""
+        """Keep ``state`` current by requesting monitor frames in the background."""
         if self._poller is None:
             self._poller = asyncio.create_task(self._poll(awake, asleep), name="aioecam-poll")
 
@@ -337,7 +347,7 @@ class EcamDevice:
         while True:
             if self.available:
                 try:
-                    await self.refresh(timeout=min(awake * 2, 10.0))
+                    await self.request_monitor(timeout=min(awake, 3.0))
                 except EcamError as exc:
                     _LOGGER.debug("monitor poll failed: %s", exc)
             sleeping = self.state is None or self.state.status == STATUS_OFF
@@ -464,10 +474,33 @@ class EcamDevice:
         )
         self._session_at = now
 
-    async def request_monitor(self, *, timeout: float = 5.0) -> MachineState:
-        """Ask the machine for a fresh monitor frame (``0D 05 75 0F``), then read it."""
+    async def request_monitor(self, *, timeout: float = 3.0) -> MachineState:
+        """Ask the machine for a fresh monitor frame (``0D 05 75 0F``) and wait for it.
+
+        Measured on an ECAM610.75 with its internet access blocked: the module
+        did not publish state changes by itself (not even waking up or
+        switching off); a new monitor frame appeared only after this request,
+        about 1-2 s after the module had fetched it. Reading straight away
+        returned the previous frame. So wait for a frame with a newer payload
+        timestamp (or a different state). If none arrives within ``timeout``
+        the latest frame is returned and ``monitor_query_result`` says
+        ``no_new_frame``; the module does not always republish an unchanged
+        state.
+        """
+        before = self.state
         await self.send(commands.monitor_request())
-        return await self.refresh(timeout=timeout)
+        deadline = time.monotonic() + timeout
+        while True:
+            self._changed.clear()
+            remaining = deadline - time.monotonic()
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self._changed.wait(), min(0.5, max(remaining, 0.0)))
+            state = await self.refresh(timeout=min(5.0, max(remaining, 1.0)))
+            if _newer(state, before):
+                return state
+            if time.monotonic() >= deadline:
+                self.monitor_query_result = "no_new_frame"
+                return state
 
     async def profiles(self, *, timeout: float = 10.0) -> list[ProfileSlot]:
         """The machine's occupied user profiles (``0xA4``)."""
