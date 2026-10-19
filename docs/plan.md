@@ -17,7 +17,7 @@ Gemessen an einer PrimaDonna Soul ECAM610.75 (192.168.178.51) mit
 | Request-Header egal | minimal und httpx-Stil identisch | Kein Raw-Socket-Hack nötig, aiohttp-Client reicht |
 | Session ohne WAN stabil | 15 min WAN gesperrt: 16/16 Sessions, 20 Monitor-Reads | LAN ist vollwertiger Primärkanal |
 | Ausschalten ohne WAN | Status 7 → 2 → 0 | lokal |
-| Wecken ohne WAN | 1× fehlgeschlagen (lange im Standby, Tank leer), 1× ok (2 min Standby) | lokal wecken, Ergebnis **prüfen**, optional Cloud-Fallback |
+| Wecken ohne WAN | 2026-10-19: 3× ok in ~2 s (5–13 min Standby); der frühere Fehlschlag war vermutlich nur eine verpasste Bestätigung (Modul meldet offline nur auf 0x75-Anfrage) | lokal wecken, per 0x75 auf frischen Frame prüfen, optional Cloud-Fallback |
 | Maschine pusht fremde Properties | `app_device_connected`, `data_request`-Echos kommen als Datapoint | Datapoints **nach Property-Namen** routen (cremalink-Bug) |
 | Standby-Monitor ist eingefroren | identischer Frame inkl. Timestamp, solange die Platine schläft | "unverändert" ≠ "Verbindung tot"; Health über Session, nicht über Monitor-Änderung |
 | Wassertank-Bit unzuverlässig (Soul) | `alarms[0]` Bit 0 = 1 bei vollem Tank | Profile pro Modell, unsichere Flags weglassen (vgl. cremalink#250) |
@@ -143,7 +143,7 @@ Reihenfolge M1 → M2 → M3 ist zwingend; M4 kann parallel zu M3 laufen.
 
 ## 6. Risiken und offene Punkte
 
-- **Wecken nach langem Standby ohne WAN** ist n = 1 fehlgeschlagen. Der Cloud-Fallback und Telemetrie im Soak-Test (M6) beantworten das nebenbei, kein Extra-Test nötig.
+- **Wecken nach langem Standby ohne WAN:** nach kurzem Standby gemessen ok (2026-10-19, `tools/wake_test.py`); Nachttest steht noch aus.
 - **HTTP-Eigenheiten des ESP32:** FiveElements berichtet, dass der Client der Maschine bestimmte Response-Framings ablehnt. Unser Raw-Server lief fehlerfrei; aiohttp-Responses müssen in M2 an der echten Maschine verifiziert werden.
 - **Nur ein LAN-Slot:** Ein zweiter LAN-Client (z. B. die App im LAN-Modus oder ein vergessenes Add-on) verdrängt uns. Lösung: Erkennung plus klare Diagnose, kein Kampf um den Slot.
 - **Erreichbarkeit HA ← Maschine:** Die Maschine muss den HA-Port erreichen können (Docker-Bridge, VLAN, Firewall). Doku und Config-Flow-Check (Test-Registrierung beim Einrichten).

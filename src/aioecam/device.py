@@ -253,8 +253,11 @@ class EcamDevice:
         """Wake the machine locally; if it does not react within ``local_grace``
         and a cloud client is configured, send the same frame through the cloud.
 
-        Waking without internet failed once in testing (after a long standby),
-        hence the fallback.
+        Without internet, waking worked locally within about 2 s in every test
+        (2026-10-19, standby up to 13 min). An earlier "failed" offline wake was
+        most likely a missed confirmation: the offline module only publishes a
+        new monitor frame on request, see ``request_monitor``. The fallback
+        stays for cases not yet tested (overnight standby).
         """
         state = await self.refresh()
         if state.status != STATUS_OFF:
