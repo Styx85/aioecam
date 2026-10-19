@@ -149,3 +149,13 @@ def test_wrong_answer_type() -> None:
 def test_sync_timeout() -> None:
     assert is_sync_timeout(Frame(RESPONSE, 0xE1, 0xF0, b""))
     assert not is_sync_timeout(Frame.from_hex(PROFILE_SELECT_ACK_1))
+
+
+def test_recipe_tag_names_follow_the_app() -> None:
+    import aioecam.device as device
+
+    # Coffee Link 4.9.6: 0x1B is INDEX_LENGTH, temperatures are 0x00 and 0x0D
+    assert device.TAG_NAMES[0x1B] == "index_length"
+    assert device.TAG_NAMES[device.TAG_TEMP] == "temperature" and device.TAG_TEMP == 0x00
+    assert device.TAG_TEA_TEMP == 0x0D and device.TAG_VISIBLE == 0x19
+    assert not hasattr(device, "TAG_TEMPERATURE")

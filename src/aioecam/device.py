@@ -53,18 +53,46 @@ STATUS_GOING_TO_SLEEP = 2
 StateCallback = Callable[[MachineState], None]
 T = TypeVar("T")
 
-# Recipe TLV tags with known meaning (from lodzen / delonghi_coffeelink).
+# Recipe TLV tags. Names follow the parameter enum of the Coffee Link app
+# 4.9.6 (statically analysed, 2026-10-19). Values are raw protocol units.
+# Tag 0x1B is INDEX_LENGTH (a size index), not a temperature: an earlier
+# TAG_TEMPERATURE = 0x1B was wrong and has been removed.
+TAG_TEMP = 0x00
 TAG_COFFEE_ML = 0x01
-TAG_INTENSITY = 0x02
+TAG_INTENSITY = 0x02  # app: TASTE (aroma/strength step)
+TAG_DOUBLE = 0x08  # app: DUExPER
 TAG_MILK = 0x09
-TAG_WATER_ML = 0x0F
-TAG_TEMPERATURE = 0x1B
+TAG_TEA_TEMP = 0x0D  # app: THE_TEMP
+TAG_WATER_ML = 0x0F  # app: HOT_WATER
+TAG_PROGRAMMABLE = 0x18
+TAG_VISIBLE = 0x19  # app: 0 hidden, 1 normal, 2 info instead of brew
+TAG_INDEX_LENGTH = 0x1B
+TAG_ACCESSORY = 0x1C  # app: ACCESSORIO
 TAG_NAMES = {
+    TAG_TEMP: "temperature",
     TAG_COFFEE_ML: "coffee_ml",
     TAG_INTENSITY: "intensity",
+    0x03: "grind",
+    0x04: "blend",
+    0x05: "infusion_speed",
+    0x06: "preinfusion",
+    0x07: "crema",
+    TAG_DOUBLE: "double",
     TAG_MILK: "milk",
+    0x0A: "milk_temperature",
+    0x0B: "milk_froth",
+    0x0C: "inversion",
+    TAG_TEA_TEMP: "tea_temperature",
+    0x0E: "tea_profile",
     TAG_WATER_ML: "water_ml",
-    TAG_TEMPERATURE: "temperature",
+    TAG_PROGRAMMABLE: "programmable",
+    TAG_VISIBLE: "visible",
+    0x1A: "visible_in_programming",
+    TAG_INDEX_LENGTH: "index_length",
+    TAG_ACCESSORY: "accessory",
+    0x1F: "iced",
+    0x20: "mug_size",
+    0x26: "app_intensity",
 }
 
 # The write session lives about 300 s; renew well before (the app uses 240 s).
