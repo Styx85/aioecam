@@ -13,7 +13,7 @@ Eletta Explore (ECAM452).
 
 > Status: beta. See [docs/plan.md](docs/plan.md) for architecture and
 > milestones. The protocol findings this library is built on are documented
-> publicly in [ecam-lan-protocol.md](https://github.com/Styx85/cremalink-ha/blob/main/docs/ecam-lan-protocol.md).
+> publicly in [ecam-lan-protocol.md](https://github.com/Styx85/cremaevolution-ha/blob/main/docs/ecam-lan-protocol.md).
 
 ## Hardware validation
 

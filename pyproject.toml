@@ -36,7 +36,7 @@ dev = [
 [project.urls]
 Source = "https://github.com/Styx85/aioecam"
 Issues = "https://github.com/Styx85/aioecam/issues"
-"Protocol notes" = "https://github.com/Styx85/cremalink-ha/blob/main/docs/ecam-lan-protocol.md"
+"Protocol notes" = "https://github.com/Styx85/cremaevolution-ha/blob/main/docs/ecam-lan-protocol.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/aioecam"]
