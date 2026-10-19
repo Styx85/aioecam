@@ -44,6 +44,20 @@ class BrewAction(IntEnum):
     STOP = 0x02
 
 
+class BrewOperation(IntEnum):
+    """Low two bits of the ``0x83`` trailer (Coffee Link 4.9.6 enum).
+
+    The app builds the trailer as ``(profile << 2) | operation`` and uses
+    PREPARE for a normal brew. SAVE and DELETE change the stored recipe; the
+    app's "inversion" variants (5-7) do not fit two bits and are not modelled.
+    """
+
+    DELETE = 0
+    SAVE = 1
+    PREPARE = 2
+    PREPARE_AND_SAVE = 3
+
+
 def power_on() -> Frame:
     return Frame(REQUEST, OPCODE_POWER, 0x0F, b"\x02\x01")
 
@@ -165,18 +179,21 @@ def brew(
     recipe: dict[int, int],
     *,
     slot: int,
-    accessory: int = 0,
+    operation: BrewOperation = BrewOperation.PREPARE,
     action: BrewAction = BrewAction.START,
 ) -> Frame:
-    """``0D LEN 83 F0 <bev> <action> <TLV...> <(slot << 2) | accessory>``.
+    """``0D LEN 83 F0 <bev> <action> <TLV...> <(slot << 2) | operation>``.
 
     ``recipe`` must be the same profile's values (recipes are profile-scoped);
-    parameters the app never sends are filtered out here.
+    parameters the app never sends are filtered out here. The trailer's low
+    bits are the operation (prepare/save/delete), not an accessory code; the
+    accessory is recipe tag ``0x1C``.
     """
     if not 0 <= beverage_id <= 0xFF:
         raise ValueError(f"beverage id out of range: {beverage_id}")
-    if not 0 <= slot <= 0x3F or not 0 <= accessory <= 0x03:
-        raise ValueError("slot or accessory out of range")
+    if not 0 <= slot <= 0x3F:
+        raise ValueError("slot out of range")
+    operation = BrewOperation(operation)
     tlv = encode_tlv({t: v for t, v in recipe.items() if brew_param_included(t)})
-    trailer = bytes([(slot << 2) | accessory])
+    trailer = bytes([(slot << 2) | operation])
     return Frame(REQUEST, OPCODE_BREW, 0xF0, bytes([beverage_id, int(action)]) + tlv + trailer)

@@ -74,8 +74,10 @@ the Coffee Link app 4.9.6 (static analysis, 2026-10-19): `0x00` TEMP,
 `0x01` coffee, `0x02` TASTE (aroma/strength step), `0x08` double, `0x09` milk,
 `0x0D` tea temperature, `0x0F` hot water, `0x18` programmable, `0x19` visible,
 `0x1A` visible in programming, `0x1B` INDEX_LENGTH, `0x1C` accessory.
-Preserve the recipe order, apply the app's tag filtering, and retain the
-model's accessory bits. All values are raw protocol values, not degrees
+Preserve the recipe order and apply the app's tag filtering. The trailer is
+`(profile << 2) | operation` (app enum: 0 delete, 1 save, 2 prepare,
+3 prepare and save); a normal brew uses 2. Earlier versions called these
+bits "accessory"; the accessory is recipe tag `0x1C`. All values are raw protocol values, not degrees
 Celsius or universal display scales.
 
 **Correction (2026-10-19):** `0x1B` was earlier documented here and exported
@@ -142,8 +144,9 @@ remain open.
 
 For this Soul, hot water comes from the central coffee/hot-water outlet
 (`A14`); an attachable hot-water nozzle is not required. Accessory `0` must
-not block hot water. The protocol trailer's accessory bits are preserved
-from the stored command and are not the monitor's accessory enum. See the
+not block hot water. The trailer's low bits are the operation mode
+(prepare = 2), not an accessory code, and unrelated to the monitor's accessory
+enum. See the
 manufacturer's [manual, sections 2.1 and 13](https://dls.delonghigroup.com/files/docs/5/EN-57132C8859.pdf).
 
 The test LAN server was closed after completion. The operator was told to

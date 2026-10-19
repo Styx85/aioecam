@@ -577,14 +577,16 @@ class EcamDevice:
         ``overrides`` maps recipe tags to values, e.g. ``{TAG_COFFEE_ML: 40}``.
         Tags the recipe does not contain are refused rather than invented.
         """
-        stored = self._beverage_frame(beverage)
+        self._beverage_frame(beverage)  # unknown beverages raise here
         recipe = await self.read_recipe(beverage, slot=slot)
         unknown = set(overrides) - set(recipe.params)
         if unknown:
             raise ValueError(f"{beverage} has no parameter(s) {sorted(unknown)}")
         params = {**recipe.params, **overrides}
+        # Always PREPARE: a custom amount must never save over the stored recipe,
+        # whatever the stored command's trailer says.
         frame = commands.brew(
-            recipe.beverage_id, params, slot=slot, accessory=stored.payload[-1] & 0x03
+            recipe.beverage_id, params, slot=slot, operation=commands.BrewOperation.PREPARE
         )
         state = await self.refresh()
         if not self.profile.is_ready(state):
