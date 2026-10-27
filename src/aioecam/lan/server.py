@@ -119,7 +119,13 @@ class LanServer:
                 _LOGGER.debug("refusing %s from unknown peer %s", request.path, request.remote)
                 return web.Response(status=403)
             body: dict[str, Any] = {}
-            raw = await request.read()
+            try:
+                raw = await request.read()
+            except (ConnectionResetError, aiohttp.ClientPayloadError) as exc:
+                # The module dropped the connection mid-request (Wi-Fi hiccup);
+                # it retries on its own. Seen in HA logs as an aiohttp traceback.
+                _LOGGER.debug("%s: %s dropped mid-request: %s", link.device_ip, request.path, exc)
+                return web.Response(status=400)
             if raw:
                 try:
                     parsed = json.loads(raw)
