@@ -205,3 +205,31 @@ async def test_module_without_cloud_refuses_lan_mode(
     device.lan_enabled = True  # cloud is back
     await connected(link, device)
     assert link.stats.last_registration_status == 202
+
+
+async def test_request_dropped_by_the_module_is_not_an_error(
+    server: LanServer, device: FakeDevice, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Seen in HA logs: the module closed its HTTP request mid-body (Wi-Fi
+    # hiccup) and aiohttp logged a ConnectionResetError traceback.
+    link = server.add_link(
+        device_ip=device.ip, lan_key=KEY, dsn=device.dsn, device_port=device.port
+    )
+
+    class DroppedRequest:
+        remote = device.ip
+        path = "/local_lan/commands.json"
+
+        async def read(self) -> bytes:
+            raise ConnectionResetError("Connection lost")
+
+    async def never_called(link: LanLink, body: dict) -> aiohttp.web.Response:
+        raise AssertionError("handler must not run for a dropped request")
+
+    route = server._wrap(never_called)
+    with caplog.at_level("DEBUG", logger="aioecam.lan.server"):
+        response = await route(DroppedRequest())  # type: ignore[arg-type]
+    assert response.status == 400
+    assert "dropped mid-request" in caplog.text
+    assert not [r for r in caplog.records if r.levelname in ("ERROR", "WARNING")]
+    await link.close()
