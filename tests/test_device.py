@@ -553,3 +553,33 @@ async def test_cloud_fallback_not_used_when_offline_wake_worked(
     state = await ecam.power_on(confirm_timeout=5, local_grace=2)
     assert state.status in (1, 7)
     assert ecam.cloud_fallbacks == 0 and cloud.datapoints == []
+
+
+async def test_request_monitor_is_bounded_by_its_timeout(
+    rig: tuple[EcamDevice, FakeMachine],
+) -> None:
+    # Codex review A4: the send alone used a fixed 10 s timeout, so
+    # request_monitor(timeout=0.5) could block for 10 s and more.
+    ecam, machine = rig
+    await ecam.refresh()
+    machine.device.responsive = False  # the module stops fetching commands
+    await asyncio.sleep(0.5)  # let a poll still running from refresh() finish
+    started = time.monotonic()
+    with pytest.raises(CommandTimeout):
+        await ecam.request_monitor(timeout=0.5)
+    assert time.monotonic() - started < 2.0
+
+
+async def test_out_of_order_monitor_frame_is_ignored(rig: tuple[EcamDevice, FakeMachine]) -> None:
+    # Codex review A5: a delayed older frame replaced the newer state.
+    from aioecam.lan.messages import Datapoint
+    from tests.fake_machine import MONITOR, monitor_value
+
+    ecam, _ = rig
+    now = int(time.time())
+    ecam._on_monitor(Datapoint(MONITOR, monitor_value(7, action=8, timestamp=now), "string"))
+    ecam._on_monitor(Datapoint(MONITOR, monitor_value(7, timestamp=now - 5), "string"))
+    assert ecam.state is not None and ecam.state.action == 8 and ecam.state.timestamp == now
+    # A much older timestamp is a module clock reset, not reordering: accept it.
+    ecam._on_monitor(Datapoint(MONITOR, monitor_value(0, timestamp=now - 86400), "string"))
+    assert ecam.state.status == 0

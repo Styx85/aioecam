@@ -197,9 +197,21 @@ class LanLink:
         try:
             await asyncio.wait_for(asyncio.shield(item.delivered), timeout)
         except TimeoutError:
-            with contextlib.suppress(ValueError):
-                self._outgoing.remove(item)
+            self._withdraw(item)
             raise CommandTimeout(f"machine did not fetch {what} within {timeout}s") from None
+        except asyncio.CancelledError:
+            # A cancelled caller must not have its command executed later, e.g.
+            # a brew that was given up on. Once fetched it cannot be recalled.
+            self._withdraw(item)
+            raise
+
+    def _withdraw(self, item: _Outgoing) -> None:
+        """Drop a command the machine has not fetched yet."""
+        if item.delivered.done():
+            return
+        with contextlib.suppress(ValueError):
+            self._outgoing.remove(item)
+        item.delivered.cancel()
 
     # --- called by the callback server -------------------------------------
 
@@ -347,9 +359,12 @@ class LanLink:
             self._set_state(LinkState.ACTIVE)
             # The key exchange is followed by a poll on its own; queued work goes out then.
             while True:
+                # Clear first, then look at the queue: work queued while the
+                # previous probe was running must not wait for the keepalive.
                 self._wake.clear()
-                with contextlib.suppress(TimeoutError):
-                    await asyncio.wait_for(self._wake.wait(), self._keepalive)
+                if not self._outgoing:
+                    with contextlib.suppress(TimeoutError):
+                        await asyncio.wait_for(self._wake.wait(), self._keepalive)
                 if not await self._alive():
                     self.stats.liveness_failures += 1
                     _LOGGER.info("%s: no response to notify, registering again", self.device_ip)
