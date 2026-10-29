@@ -233,3 +233,50 @@ async def test_request_dropped_by_the_module_is_not_an_error(
     assert "dropped mid-request" in caplog.text
     assert not [r for r in caplog.records if r.levelname in ("ERROR", "WARNING")]
     await link.close()
+
+
+async def test_write_queued_during_a_probe_is_not_delayed_to_the_keepalive(
+    server: LanServer, device: FakeDevice
+) -> None:
+    # Codex review A1: the loop cleared the wake-up signal after a probe, so a
+    # write queued while the probe ran waited for the next keepalive (20 s in
+    # HA) and timed out after 10 s ("machine did not fetch write ...").
+    link = link_to(server, device, keepalive=30.0)
+    await connected(link, device)
+    original = link._alive
+    queued: list[asyncio.Task[None]] = []
+
+    async def alive_then_queue() -> bool:
+        ok = await original()
+        if not queued:
+            queued.append(
+                asyncio.create_task(link.write("data_request", "DQeEDwIBVRJq1PRB", timeout=3))
+            )
+            await asyncio.sleep(0)  # the write is queued and has set the wake-up signal
+        return ok
+
+    link._alive = alive_then_queue  # type: ignore[method-assign]
+    link._wake.set()  # trigger one probe now instead of after 30 s
+    await eventually(lambda: bool(queued))
+    await asyncio.wait_for(queued[0], 5)  # raises CommandTimeout without the fix
+    assert ("data_request", "DQeEDwIBVRJq1PRB") in device.writes
+
+
+async def test_cancelled_write_is_not_delivered_later(
+    server: LanServer, device: FakeDevice
+) -> None:
+    # Codex review A2: a cancelled caller left its command queued, so it could
+    # still be executed after reconnecting (e.g. a brew the caller gave up on).
+    link = link_to(server, device)
+    await connected(link, device)
+    device.responsive = False  # the module stops fetching commands for now
+    task = asyncio.create_task(link.write("data_request", "DQeEDwIBVRJq1PRB", timeout=10))
+    await eventually(lambda: len(link._outgoing) == 1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert not link._outgoing
+    device.responsive = True
+    await link.write("data_request", "DQeEDwIBVRJq1PRB", timeout=3)  # the module polls again
+    await asyncio.sleep(0.3)  # give a stale queued command the chance to go out too
+    assert device.writes == [("data_request", "DQeEDwIBVRJq1PRB")]  # once, not twice

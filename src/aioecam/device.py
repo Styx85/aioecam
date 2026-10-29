@@ -99,12 +99,28 @@ TAG_NAMES = {
 SESSION_REFRESH = 240.0
 
 
+# A frame whose payload timestamp is older than the current one by up to this
+# much is a delayed answer that arrived out of order. A larger jump back is
+# treated as a clock reset of the module (e.g. after a restart without
+# internet), so the state can never get stuck on an old timestamp.
+REORDER_WINDOW = 3600
+
+
+def _reordered(state: MachineState, current: MachineState) -> bool:
+    """True if ``state`` is older than ``current`` and arrived out of order."""
+    if state.timestamp is None or current.timestamp is None:
+        return False
+    return 0 < current.timestamp - state.timestamp <= REORDER_WINDOW
+
+
 def _newer(state: MachineState, before: MachineState | None) -> bool:
     """True if ``state`` is a frame published after ``before``."""
     if before is None:
         return True
     if state.timestamp is not None and before.timestamp is not None:
-        return state.timestamp > before.timestamp or state != before
+        if _reordered(state, before):
+            return False
+        return state.timestamp != before.timestamp or state != before
     return state != before
 
 
@@ -208,6 +224,10 @@ class EcamDevice:
             return
         self.last_monitor_at = time.time()
         if state == self.state:
+            return
+        if self.state is not None and _reordered(state, self.state):
+            _LOGGER.debug("ignoring out-of-order monitor frame (ts %s < %s)",
+                          state.timestamp, self.state.timestamp)  # fmt: skip
             return
         self.state = state
         self._changed.set()
@@ -491,14 +511,24 @@ class EcamDevice:
         state.
         """
         before = self.state
-        await self.send(commands.monitor_request())
+        # One deadline for the whole operation, including the module fetching
+        # the request: callers such as wait_for() rely on it being bounded.
         deadline = time.monotonic() + timeout
+        await self.send(commands.monitor_request(), timeout=max(timeout, 0.1))
         while True:
             self._changed.clear()
             remaining = deadline - time.monotonic()
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(self._changed.wait(), min(0.5, max(remaining, 0.0)))
-            state = await self.refresh(timeout=min(5.0, max(remaining, 1.0)))
+            remaining = deadline - time.monotonic()
+            try:
+                async with asyncio.timeout(max(remaining, 0.5)):
+                    state = await self.refresh(timeout=max(remaining, 0.5))
+            except (TimeoutError, CommandTimeout):
+                if self.state is None:
+                    raise CommandTimeout(f"no monitor frame within {timeout}s") from None
+                self.monitor_query_result = "no_new_frame"
+                return self.state
             if _newer(state, before):
                 return state
             if time.monotonic() >= deadline:
