@@ -62,9 +62,31 @@ async def test_onboarding(cloud: tuple[FakeCloud, Region, aiohttp.ClientSession]
     soul, eletta = result.machines  # the air conditioner is skipped
     assert (soul.profile_family, soul.lan_key, soul.key_id) == ("ecam61x", "S0ULKEY==", 58915)
     assert soul.device.lan_ip == "192.168.1.50"
-    assert (eletta.profile_family, eletta.lan_key) == ("ecam45x", None)  # LAN disabled
+    assert (eletta.profile_family, eletta.lan_key) == ("ecam45x", None)  # no key in the cloud
     assert result.refresh_token == "refresh-1"  # rotated once
     assert "S0ULKEY" not in repr(result)
+
+
+async def test_onboarding_asks_for_a_key_even_if_lan_is_reported_off(
+    cloud: tuple[FakeCloud, Region, aiohttp.ClientSession],
+) -> None:
+    fake, region, http = cloud
+    fake.devices = [ELETTA]
+    fake.lan[ELETTA["dsn"]] = {"lanip": {"lanip_key": "ELETTAKEY==", "lanip_key_id": 7}}
+    (eletta,) = (await onboard(http, EMAIL, PASSWORD, region=region)).machines
+    assert not eletta.device.lan_enabled
+    assert (eletta.lan_key, eletta.key_id) == ("ELETTAKEY==", 7)
+
+
+async def test_onboarding_survives_a_refused_key_request(
+    cloud: tuple[FakeCloud, Region, aiohttp.ClientSession],
+) -> None:
+    fake, region, http = cloud
+    fake.devices = [SOUL, ELETTA]
+    fake.lan[SOUL["dsn"]] = {"lanip": {"lanip_key": "S0ULKEY==", "lanip_key_id": 1}}
+    fake.lan_status[ELETTA["dsn"]] = 403  # LAN disabled: the cloud refuses
+    soul, eletta = (await onboard(http, EMAIL, PASSWORD, region=region)).machines
+    assert soul.lan_key == "S0ULKEY==" and eletta.lan_key is None
 
 
 async def test_token_rotation_and_revoked_access(

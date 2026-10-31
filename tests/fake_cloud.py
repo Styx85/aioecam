@@ -19,6 +19,7 @@ class FakeCloud:
         self.region: Region = load_region("eu")
         self.devices: list[dict[str, Any]] = []
         self.lan: dict[str, dict[str, Any]] = {}  # dsn -> lan.json payload
+        self.lan_status: dict[str, int] = {}  # dsn -> forced lan.json error status
         self.datapoints: list[tuple[str, str, str]] = []
         self.on_datapoint: Callable[[str, str, str], Awaitable[None]] | None = None
         self.refreshes = 0
@@ -128,6 +129,8 @@ class FakeCloud:
     async def _lan(self, req: web.Request) -> web.Response:
         if not self._authorized(req):
             return web.Response(status=401)
+        if status := self.lan_status.get(req.match_info["dsn"]):
+            return web.Response(status=status)
         payload = self.lan.get(req.match_info["dsn"])
         return web.json_response(payload) if payload else web.Response(status=404)
 

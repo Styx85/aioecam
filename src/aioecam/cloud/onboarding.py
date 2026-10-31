@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 import aiohttp
 
-from aioecam.cloud.api import AylaCloud, CloudDevice
+from aioecam.cloud.api import AylaCloud, CloudDevice, CloudError
 from aioecam.cloud.auth import login
 from aioecam.cloud.region import Region, load_region
 from aioecam.ecam.profile import profile_for_oem_model
@@ -57,7 +57,16 @@ async def onboard(
             family: str | None = profile_for_oem_model(device.oem_model or "").family
         except LookupError:
             family = None
-        lan = await cloud.lan_config(device.dsn) if device.lan_enabled else None
+        # Ask even when the cloud says LAN mode is off: an Eletta Explore
+        # reporting lan_enabled false has a module that looks LAN-ready
+        # (issue #27), and the flag alone may not be the whole story.
+        try:
+            lan = await cloud.lan_config(device.dsn)
+        except CloudError as err:
+            _LOGGER.debug("no LAN key for a %s: %s", device.oem_model, err)
+            lan = None
+        if lan and not device.lan_enabled:
+            _LOGGER.info("cloud reports LAN mode off for a %s but has a LAN key", device.oem_model)
         machines.append(
             OnboardedMachine(
                 device=device,
