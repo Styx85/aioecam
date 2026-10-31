@@ -59,9 +59,12 @@ python -m aioecam --cloud status
 ```
 
 Writes become cloud datapoints; the link polls the machine's properties in
-one request, every 30 s and every 5 s for a minute after a write, to stay
-well below Ayla's limit of roughly 200 requests per hour. Commands reach the
-machine within seconds, state changes within the poll interval. Call
+one request, every 30 s and every 5 s for a minute after a command. A budget
+of 180 requests per hour (Ayla allows roughly 200) is enforced per kind of
+request; commands always go out. Every 5 minutes the link checks the
+machine's cloud connection and is down while the machine is offline, because
+the cloud keeps serving its last values. Commands reach the machine within
+seconds, state changes within the poll interval. Call
 `EcamDevice.keep_cloud_session()` about every 4 minutes, otherwise the cloud
 stops relaying writes. Status reads through the cloud were verified on the
 ECAM610.75; brewing through the cloud was not.

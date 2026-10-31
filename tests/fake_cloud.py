@@ -59,6 +59,7 @@ class FakeCloud:
         self.datapoints: list[tuple[str, str, str]] = []
         self.properties: dict[str, CloudProperties] = {}  # dsn -> what the machine sent
         self.property_reads = 0
+        self.connection_status: dict[str, str] = {}  # dsn -> e.g. "Offline"
         self.on_datapoint: Callable[[str, str, str], Awaitable[None]] | None = None
         self.refreshes = 0
         self.revoke_access_once = False
@@ -84,6 +85,7 @@ class FakeCloud:
         r.add_get("/apiv1/devices/{dsn}/lan.json", self._lan)
         r.add_get("/apiv1/devices/{dsn}/connection_config.json", self._not_found)
         r.add_post("/apiv1/dsns/{dsn}/properties/{name}/datapoints.json", self._datapoint)
+        r.add_get("/apiv1/dsns/{dsn}.json", self._device)
         r.add_get("/apiv1/dsns/{dsn}/properties.json", self._read_properties)
         r.add_get("/apiv1/dsns/{dsn}/properties/{name}.json", self._read_property)
         self._runner = web.AppRunner(app, access_log=None)
@@ -182,8 +184,14 @@ class FakeCloud:
             return web.Response(status=401)
         self.property_reads += 1
         props = self.properties.get(req.match_info["dsn"], CloudProperties())
-        names = req.query.getall("names[]", [])
+        names = req.query.getall("names[]", []) or list(props)
         return web.json_response([{"property": props.record(n)} for n in names if n in props])
+
+    async def _device(self, req: web.Request) -> web.Response:
+        if not self._authorized(req):
+            return web.Response(status=401)
+        status = self.connection_status.get(req.match_info["dsn"], "Online")
+        return web.json_response({"device": {"connection_status": status}})
 
     async def _read_property(self, req: web.Request) -> web.Response:
         if not self._authorized(req):

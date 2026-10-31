@@ -107,7 +107,10 @@ class AylaCloud:
                         raise CloudError(f"{method} {path} -> HTTP {resp.status}")
                     if resp.status == 204:
                         return None
-                    return await resp.json(content_type=None)
+                    try:
+                        return await resp.json(content_type=None)
+                    except ValueError as exc:
+                        raise CloudError(f"{method} {path}: invalid JSON") from exc
             except (aiohttp.ClientError, TimeoutError) as exc:
                 raise CloudError(f"{method} {path} failed: {exc}") from exc
         raise AssertionError("unreachable")
@@ -151,20 +154,30 @@ class AylaCloud:
         data = await self._request("GET", f"/dsns/{dsn}/properties/{name}.json", allow_404=True)
         return (data or {}).get("property", {}).get("value")
 
-    async def read_properties(self, dsn: str, names: list[str]) -> dict[str, dict[str, Any]]:
-        """Several properties in one request, keyed by name (missing ones left out).
+    async def read_properties(self, dsn: str, names: list[str] | None) -> dict[str, dict[str, Any]]:
+        """Several properties in one request, keyed by name (missing ones left out);
+        ``None`` reads all of them.
 
         Each entry is the cloud's property record: ``value``, ``base_type`` and
         ``data_updated_at`` (when the machine last sent it).
         """
-        query = "&".join(f"names[]={name}" for name in names)
-        data = await self._request("GET", f"/dsns/{dsn}/properties.json?{query}") or []
+        query = "?" + "&".join(f"names[]={name}" for name in names) if names else ""
+        data = await self._request("GET", f"/dsns/{dsn}/properties.json{query}") or []
+        if not isinstance(data, list):
+            raise CloudError("properties: unexpected answer")
         result = {}
         for entry in data:
-            prop = entry.get("property", entry)
-            if isinstance(prop.get("name"), str):
+            prop = entry.get("property", entry) if isinstance(entry, dict) else None
+            if isinstance(prop, dict) and isinstance(prop.get("name"), str):
                 result[prop["name"]] = prop
         return result
+
+    async def connection_status(self, dsn: str) -> str | None:
+        """The machine's cloud connection, e.g. ``Online`` or ``Offline``."""
+        data = await self._request("GET", f"/dsns/{dsn}.json") or {}
+        device = data.get("device", data) if isinstance(data, dict) else {}
+        status = device.get("connection_status") if isinstance(device, dict) else None
+        return status if isinstance(status, str) else None
 
     async def write_property(self, dsn: str, name: str, value: str) -> None:
         """Create a datapoint; the cloud forwards it to the machine when it is online."""
