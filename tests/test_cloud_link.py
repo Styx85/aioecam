@@ -212,7 +212,7 @@ async def test_offline_machine_is_not_available(rig: Any) -> None:
     ecam, _, _, fake = rig
     link: CloudLink = ecam.link
     fake.connection_status[DSN] = "Offline"
-    link._status_at = 0  # check the connection on the next poll
+    link._status_at = float("-inf")  # check the connection on the next poll
     link._wake.set()
     for _ in range(40):
         if not ecam.available:

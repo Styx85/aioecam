@@ -106,7 +106,7 @@ class CloudLink:
         self._state_callbacks: list[StateCallback] = []
         self._fast_until = 0.0
         self._all_until = 0.0
-        self._status_at = 0.0
+        self._status_at = float("-inf")  # never checked
         self._fetching = asyncio.Lock()
         self._wake = asyncio.Event()
         self._active = asyncio.Event()
