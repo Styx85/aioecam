@@ -431,18 +431,15 @@ class EcamDevice:
         """
         queue: asyncio.Queue[tuple[Frame, str]] = asyncio.Queue()
         expect = getattr(self.link, "expect_answers", None)
-        if expect is not None:
-            # Polling transport: answers may land in any property, so note what
-            # the cloud holds now (before listening) and look at all of them after.
-            try:
-                async with asyncio.timeout(timeout):
-                    await expect(timeout)
-            except TimeoutError:
-                raise CommandTimeout(f"no answer for {what} within {timeout}s") from None
-        self._responses.append(queue)
         try:
-            await self.send(frame, timeout=timeout)
+            # One deadline for the whole exchange: priming, delivery and answer.
             async with asyncio.timeout(timeout):
+                if expect is not None:
+                    # Polling transport: answers may land in any property, so note
+                    # what the cloud holds now (before listening), then look at all.
+                    await expect(timeout)
+                self._responses.append(queue)
+                await self.send(frame, timeout=timeout)
                 while True:
                     if poll_answer:
                         try:
@@ -469,7 +466,8 @@ class EcamDevice:
         except TimeoutError:
             raise CommandTimeout(f"no answer for {what} within {timeout}s") from None
         finally:
-            self._responses.remove(queue)
+            if queue in self._responses:
+                self._responses.remove(queue)
 
     async def read_statistics_page(
         self, start_id: int, count: int = MAX_COUNT, *, timeout: float = 20.0

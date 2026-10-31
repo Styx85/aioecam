@@ -166,6 +166,29 @@ async def test_reads_refuse_when_the_budget_is_spent(rig: Any) -> None:
     await ecam.send(commands.monitor_request())
 
 
+async def test_concurrent_reads_cannot_overspend(rig: Any) -> None:
+    ecam, *_ = rig
+    link: CloudLink = ecam.link
+    link._max_requests = len(link._request_times) + 1
+    results = await asyncio.gather(*(link.read(MONITOR) for _ in range(4)), return_exceptions=True)
+    assert sum(not isinstance(r, Exception) for r in results) <= 1
+    assert link._used() <= link._max_requests
+
+
+async def test_starved_poll_still_checks_the_connection(rig: Any) -> None:
+    ecam, *_ = rig
+    link: CloudLink = ecam.link
+    link._status_interval = 0.1
+    while len(link._request_times) < 20:  # enough history for distinct shares
+        link._request_times.append(time.monotonic())
+    used = len(link._request_times)
+    # A budget where background polls are spent but connection checks still fit.
+    link._max_requests = next(m for m in range(used, 10 * used + 20)
+                              if int(m * 0.75) <= used < int(m * 0.85))  # fmt: skip
+    link._status_at = time.monotonic()
+    assert link._delay() <= link._interval  # wakes for the next connection check
+
+
 async def test_keepalive_does_not_start_fast_polling(rig: Any) -> None:
     ecam, _, _, fake = rig
     await ecam.keep_cloud_session()

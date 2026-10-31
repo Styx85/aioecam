@@ -51,6 +51,10 @@ STATUS_SHARE = 0.85  # connection checks
 REQUEST_SHARE = 1.0  # reads and keep-alives asked for by the caller
 
 
+class BudgetSpent(CommandTimeout):
+    """The hourly request budget has no room for this kind of request."""
+
+
 @dataclass
 class CloudLinkStats:
     """Counters for diagnostics."""
@@ -165,8 +169,7 @@ class CloudLink:
         there, so this first notes every property's current timestamp; only
         values sent after that are passed on.
         """
-        self._require_budget(REQUEST_SHARE)
-        await self._fetch(None, announce_new=False)
+        await self._fetch(None, share=REQUEST_SHARE, announce_new=False)
         now = time.monotonic()
         self._all_until = max(self._all_until, now + seconds)
         self._fast_until = max(self._fast_until, now + seconds)
@@ -202,11 +205,10 @@ class CloudLink:
     async def read(self, name: str, *, timeout: float = 10.0) -> Datapoint:
         """The cloud's latest value of ``name``; new values also go to subscribers."""
         self._require_usable()
-        self._require_budget(REQUEST_SHARE)
         self.watch(name)
         try:
             async with asyncio.timeout(timeout):
-                records = await self._fetch([name])
+                records = await self._fetch([name], share=REQUEST_SHARE)
         except TimeoutError:
             raise CommandTimeout(f"no {name} from the cloud within {timeout}s") from None
         if name not in records:
@@ -246,13 +248,16 @@ class CloudLink:
 
     def _require_budget(self, share: float) -> None:
         if not self._admit(share):
-            raise CommandTimeout("the cloud request budget for this hour is spent")
+            raise BudgetSpent("the cloud request budget for this hour is spent")
 
     async def _fetch(
-        self, names: list[str] | None, *, announce_new: bool = True
+        self, names: list[str] | None, *, share: float, announce_new: bool = True
     ) -> dict[str, dict[str, Any]]:
         # One fetch at a time: a slow older answer must not overtake a newer one.
+        # The budget is checked inside the lock, so waiting callers cannot all
+        # pass against the same remaining room.
         async with self._fetching:
+            self._require_budget(share)
             self._spend()
             records = await self._cloud.read_properties(self.dsn, names)
             self._deliver(records, announce_new=announce_new)
@@ -296,10 +301,16 @@ class CloudLink:
                 _LOGGER.exception("state callback failed")
 
     def _delay(self) -> float:
-        fast = time.monotonic() < self._fast_until and self._admit(FAST_SHARE)
+        now = time.monotonic()
+        fast = now < self._fast_until and self._admit(FAST_SHARE)
         delay = self._fast_interval if fast else self._interval
-        # Never sooner than the budget allows the next background request.
-        return max(delay, self._wait_for(min(POLL_SHARE, STATUS_SHARE)))
+        poll_wait = self._wait_for(POLL_SHARE)
+        if poll_wait <= 0:
+            return delay
+        # The poll is starved: still wake for the next connection check.
+        status_due = max(self._status_at + self._status_interval - now, 0.0)
+        status_wait = max(status_due, self._wait_for(STATUS_SHARE))
+        return max(delay, min(poll_wait, status_wait))
 
     async def _poll_once(self) -> None:
         now = time.monotonic()
@@ -313,9 +324,13 @@ class CloudLink:
             self._set_state(LinkState.IDLE)
             return
         answers = now < self._all_until
-        if not self._admit(REQUEST_SHARE if answers else POLL_SHARE):
-            return  # budget: skip this poll, the state stays as it is
-        await self._fetch(None if answers else self._watch)
+        try:
+            await self._fetch(
+                None if answers else self._watch,
+                share=REQUEST_SHARE if answers else POLL_SHARE,
+            )
+        except BudgetSpent:
+            return  # skip this poll; the state stays as it is
         self._set_state(LinkState.ACTIVE)
 
     async def _run(self) -> None:
