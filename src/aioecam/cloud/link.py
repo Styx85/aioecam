@@ -98,6 +98,7 @@ class CloudLink:
         self._fetching = asyncio.Lock()
         self._wake = asyncio.Event()
         self._active = asyncio.Event()
+        self._rejected = asyncio.Event()  # the cloud refused the sign-in
         self._task: asyncio.Task[None] | None = None
 
     # --- lifecycle ---------------------------------------------------------
@@ -116,11 +117,21 @@ class CloudLink:
             self._set_state(LinkState.CLOSED)
 
     async def wait_active(self, timeout: float) -> None:
+        """Wait for the first good poll; a refused sign-in ends the wait at once."""
+        active = asyncio.ensure_future(self._active.wait())
+        rejected = asyncio.ensure_future(self._rejected.wait())
         try:
-            await asyncio.wait_for(self._active.wait(), timeout)
-        except TimeoutError:
-            detail = f": {self.stats.last_error}" if self.stats.last_error else ""
-            raise NotConnected(f"no cloud connection after {timeout}s{detail}") from None
+            await asyncio.wait({active, rejected}, timeout=timeout,
+                               return_when=asyncio.FIRST_COMPLETED)  # fmt: skip
+        finally:
+            active.cancel()
+            rejected.cancel()
+        if self._active.is_set():
+            return
+        detail = f": {self.stats.last_error}" if self.stats.last_error else ""
+        if self._rejected.is_set():
+            raise NotConnected(f"the cloud rejected the sign-in{detail}")
+        raise NotConnected(f"no cloud connection after {timeout}s{detail}")
 
     # --- public API (same as LanLink) -------------------------------------
 
@@ -291,6 +302,8 @@ class CloudLink:
                 self.stats.failures += 1
                 self.stats.last_error = str(err) or type(err).__name__
                 self.stats.auth_failed = isinstance(err, AuthError)
+                if self.stats.auth_failed:
+                    self._rejected.set()
                 _LOGGER.debug("cloud poll failed (%s in a row): %s", failures, err)
                 if failures >= FAILURE_LIMIT or self.stats.auth_failed:
                     self._set_state(LinkState.IDLE)
@@ -299,6 +312,7 @@ class CloudLink:
                 failures = 0
                 self.stats.last_error = None
                 self.stats.auth_failed = False
+                self._rejected.clear()
                 self.stats.last_poll = time.time()
                 delay = self._interval if self.state is not LinkState.ACTIVE else self._delay()
             self._wake.clear()

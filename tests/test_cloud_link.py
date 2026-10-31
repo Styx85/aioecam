@@ -190,6 +190,21 @@ async def test_rejected_sign_in_is_reported(rig: Any, monkeypatch: pytest.Monkey
     assert link.stats.auth_failed and link.state is LinkState.IDLE
 
 
+async def test_rejected_sign_in_ends_the_wait_at_once() -> None:
+    class Rejecting:
+        async def connection_status(self, dsn: str) -> str:
+            raise AuthError("cloud rejected a fresh access token")
+
+    link = CloudLink(Rejecting(), dsn=DSN, watch=[MONITOR], **FAST)  # type: ignore[arg-type]
+    link.start()
+    try:
+        async with asyncio.timeout(1):
+            with pytest.raises(NotConnected, match="rejected the sign-in"):
+                await link.wait_active(30)
+    finally:
+        await link.close()
+
+
 async def test_unexpected_error_does_not_stop_the_poll(
     rig: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
