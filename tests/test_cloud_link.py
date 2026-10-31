@@ -111,6 +111,75 @@ async def test_eletta_writes_carry_the_app_signature(rig: Any) -> None:
     assert base64.b64decode(keepalive)[4:] == commands.APP_SIGNATURE
 
 
+APP_ID = bytes.fromhex("00c58621")  # an id the Coffee Link app used
+
+
+async def test_eletta_adopts_the_app_id_from_its_last_request(rig: Any) -> None:
+    _, _, module, fake = rig
+    eletta = EcamDevice(rig[0].link, load_profile("ecam45x"))
+    assert eletta.app_id_source == "default"
+    module.properties["app_data_request"] = encode_value(
+        commands.monitor_request(), timestamp=1, app_id=APP_ID
+    )
+    # The keep-alive adopts it before announcing the session.
+    await eletta.keep_cloud_session()
+    await eletta.send(commands.monitor_request())
+    (_, _, keepalive), (_, _, request) = fake.datapoints[-2:]
+    assert base64.b64decode(keepalive)[4:] == APP_ID
+    assert decode_value(request).app_id == APP_ID
+    assert eletta.app_id_source == "app"
+    # Once adopted, keep-alives do not look again.
+    reads = fake.property_reads
+    await eletta.keep_cloud_session()
+    assert fake.property_reads <= reads + 1  # at most the link's own poll
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("app_device_connected", base64.b64encode(bytes(4) + APP_ID).decode()),
+        ("app_id", str(int.from_bytes(APP_ID, "big", signed=True))),
+        ("app_id", "-1"),
+    ],
+)
+async def test_eletta_adopts_the_app_id_from_the_session(rig: Any, name: str, value: str) -> None:
+    _, _, module, _ = rig
+    eletta = EcamDevice(rig[0].link, load_profile("ecam45x"))
+    module.properties[name] = value
+    expected = int(value).to_bytes(4, "big", signed=True) if name == "app_id" else APP_ID
+    assert await eletta.adopt_app_id() == expected
+
+
+async def test_eletta_ignores_our_own_default_and_empty_ids(rig: Any) -> None:
+    _, _, module, _ = rig
+    eletta = EcamDevice(rig[0].link, load_profile("ecam45x"))
+    module.properties["app_data_request"] = encode_value(
+        commands.monitor_request(), timestamp=1, app_id=commands.APP_SIGNATURE
+    )
+    module.properties["app_device_connected"] = base64.b64encode(bytes(8)).decode()
+    module.properties["app_id"] = "not a number"
+    assert await eletta.adopt_app_id() is None
+    assert eletta.app_id_source == "default"
+
+
+async def test_a_configured_app_id_is_kept(rig: Any) -> None:
+    _, _, module, fake = rig
+    mine = bytes.fromhex("c0ffee11")
+    eletta = EcamDevice(rig[0].link, load_profile("ecam45x"), app_id=mine)
+    module.properties["app_id"] = "12944929"
+    await eletta.keep_cloud_session()
+    assert base64.b64decode(fake.datapoints[-1][2])[4:] == mine
+    assert eletta.app_id_source == "configured"
+
+
+async def test_soul_has_no_app_id_to_adopt(rig: Any) -> None:
+    ecam, _, _, fake = rig
+    reads = fake.property_reads
+    assert await ecam.adopt_app_id() is None
+    assert ecam.app_id_source is None
+    assert fake.property_reads <= reads + 1  # at most the link's own poll
+
+
 async def test_settings_answer_in_its_own_property_arrives(rig: Any) -> None:
     ecam, *_ = rig
     # The Soul republishes 0x95 answers into d062_mchn_sett, not data_response.

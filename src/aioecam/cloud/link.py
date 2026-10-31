@@ -216,6 +216,17 @@ class CloudLink:
         record = records[name]
         return Datapoint(name=name, value=record.get("value"), base_type=record.get("base_type"))
 
+    async def read_values(self, names: list[str], *, timeout: float = 10.0) -> dict[str, Any]:
+        """The cloud's latest values of ``names`` in one request, without
+        watching them; names the cloud has no value for are left out."""
+        self._require_usable()
+        try:
+            async with asyncio.timeout(timeout):
+                records = await self._fetch(names, share=REQUEST_SHARE, announce_new=False)
+        except TimeoutError:
+            raise CommandTimeout(f"no values from the cloud within {timeout}s") from None
+        return {name: records[name].get("value") for name in names if name in records}
+
     # --- internals ---------------------------------------------------------
 
     def _require_usable(self) -> None:
