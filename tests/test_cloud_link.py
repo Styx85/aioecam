@@ -177,6 +177,19 @@ async def test_adopting_leaves_the_keepalive_its_budget(rig: Any) -> None:
     assert eletta.app_id_source == "default"
 
 
+async def test_adopting_leaves_a_small_budget_its_last_request(rig: Any) -> None:
+    _, _, module, fake = rig
+    link: CloudLink = rig[0].link
+    eletta = EcamDevice(link, load_profile("ecam45x"))
+    module.properties["app_id"] = "12944929"
+    link._request_times.clear()
+    link._request_times.extend([time.monotonic()] * 5)
+    link._max_requests = 6  # 5 < 6 * 0.85: the share alone would admit the read
+    await eletta.keep_cloud_session()
+    assert fake.datapoints[-1][1] == "app_device_connected"
+    assert eletta.app_id_source == "default"
+
+
 async def test_a_configured_app_id_is_kept(rig: Any) -> None:
     _, _, module, fake = rig
     mine = bytes.fromhex("c0ffee11")
