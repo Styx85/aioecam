@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -12,8 +13,9 @@ from aioecam.cloud.api import AylaCloud, CloudError
 from aioecam.cloud.link import CloudLink
 from aioecam.device import EcamDevice
 from aioecam.ecam import commands
+from aioecam.ecam.frame import RESPONSE, Frame
 from aioecam.ecam.profile import load_profile
-from aioecam.ecam.value import decode_value
+from aioecam.ecam.value import decode_value, encode_value
 from aioecam.exceptions import AuthError, CommandTimeout, NotConnected
 from aioecam.lan.link import LinkState
 from tests.fake_cloud import CloudMachine, FakeCloud
@@ -45,7 +47,7 @@ async def test_power_on_and_off_through_the_cloud(rig: Any) -> None:
     ecam, machine, _, _ = rig
     assert ecam.available and ecam.state is not None and ecam.state.status == 0
     assert (await ecam.power_on(confirm_timeout=5)).status == 7
-    assert (await ecam.power_off(confirm_timeout=5)).status == 0
+    assert (await ecam.power_off(confirm_timeout=5)).status in (0, 2)  # 2: going to sleep
     # The machine publishes changes itself; no monitor requests over the cloud.
     assert machine.monitor_requests == 0
 
@@ -113,6 +115,27 @@ async def test_settings_answer_in_its_own_property_arrives(rig: Any) -> None:
     ecam, *_ = rig
     # The Soul republishes 0x95 answers into d062_mchn_sett, not data_response.
     assert await ecam.read_setting("auto_off", timeout=3) == 2
+
+
+async def test_cached_old_answer_does_not_answer_a_new_request(rig: Any) -> None:
+    ecam, _, module, _ = rig
+    # The cloud still holds an auto-off answer from long ago in a property the
+    # link has never polled. The machine does not answer this time.
+    old = encode_value(Frame(RESPONSE, 0x95, 0xF0, bytes([0, 0x3E, 0, 0, 0, 1])), timestamp=1)
+    module.properties["d062_mchn_sett"] = old
+    module.online = False
+    with pytest.raises(CommandTimeout):
+        await ecam.read_setting("auto_off", timeout=1)
+
+
+async def test_request_budget_caps_the_poll(rig: Any) -> None:
+    ecam, _, _, fake = rig
+    link: CloudLink = ecam.link
+    link._max_requests = len(link._request_times) + 3
+    link._fast_until = time.monotonic() + 60  # as after a command
+    before = fake.property_reads
+    await asyncio.sleep(1.0)
+    assert fake.property_reads - before <= 3
 
 
 async def test_keepalive_does_not_start_fast_polling(rig: Any) -> None:

@@ -25,6 +25,7 @@ import asyncio
 import contextlib
 import logging
 import time
+from collections import deque
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
@@ -72,6 +73,7 @@ class CloudLink:
         fast_window: float = 60.0,
         status_interval: float = 300.0,
         max_backoff: float = 300.0,
+        max_requests_per_hour: int = 180,
     ) -> None:
         self.dsn = dsn
         self.device_ip = device_ip or "cloud"
@@ -82,6 +84,8 @@ class CloudLink:
         self._fast_window = fast_window
         self._status_interval = status_interval
         self._max_backoff = max_backoff
+        self._max_requests = max_requests_per_hour
+        self._request_times: deque[float] = deque()
 
         self.state = LinkState.IDLE
         self.stats = CloudLinkStats()
@@ -134,9 +138,15 @@ class CloudLink:
         if name not in self._watch:
             self._watch.append(name)
 
-    def expect_answers(self, seconds: float) -> None:
-        """Poll all properties fast for ``seconds``: some answers land in their
-        own property (``d282_mchn_sett_aoff``, ``d039_1_rec_espresso``, ...)."""
+    async def expect_answers(self, seconds: float) -> None:
+        """Call before sending a request: polls all properties fast for ``seconds``.
+
+        Some answers land in their own property (``d282_mchn_sett_aoff``,
+        ``d039_1_rec_espresso``, ...). The cloud still holds older answers
+        there, so this first notes every property's current timestamp; only
+        values sent after that are passed on.
+        """
+        await self._fetch(None, announce_new=False)
         now = time.monotonic()
         self._all_until = max(self._all_until, now + seconds)
         self._fast_until = max(self._fast_until, now + seconds)
@@ -156,7 +166,7 @@ class CloudLink:
         self._require_usable()
         try:
             async with asyncio.timeout(timeout):
-                self.stats.requests += 1
+                self._spend()  # commands always go out; the poll gives way
                 await self._cloud.write_property(self.dsn, name, value)
         except TimeoutError:
             raise CommandTimeout(f"cloud did not accept write {name} within {timeout}s") from None
@@ -188,15 +198,28 @@ class CloudLink:
         if status is not None and status != ONLINE:
             raise NotConnected(f"the machine is {status} in the cloud")
 
-    async def _fetch(self, names: list[str] | None) -> dict[str, dict[str, Any]]:
+    def _spend(self) -> None:
+        self.stats.requests += 1
+        self._request_times.append(time.monotonic())
+
+    def _used(self) -> int:
+        """Requests in the last hour."""
+        cutoff = time.monotonic() - 3600
+        while self._request_times and self._request_times[0] < cutoff:
+            self._request_times.popleft()
+        return len(self._request_times)
+
+    async def _fetch(
+        self, names: list[str] | None, *, announce_new: bool = True
+    ) -> dict[str, dict[str, Any]]:
         # One fetch at a time: a slow older answer must not overtake a newer one.
         async with self._fetching:
-            self.stats.requests += 1
+            self._spend()
             records = await self._cloud.read_properties(self.dsn, names)
-            self._deliver(records)
+            self._deliver(records, announce_new=announce_new)
             return records
 
-    def _deliver(self, records: dict[str, dict[str, Any]]) -> None:
+    def _deliver(self, records: dict[str, dict[str, Any]], *, announce_new: bool = True) -> None:
         for name, record in records.items():
             stamp = record.get("data_updated_at")
             previous = self._seen.get(name)
@@ -205,6 +228,8 @@ class CloudLink:
             if not isinstance(stamp, str) or (previous is not None and stamp <= previous):
                 continue
             self._seen[name] = stamp
+            if previous is None and not announce_new:
+                continue  # baseline only: this value predates the request
             point = Datapoint(
                 name=name, value=record.get("value"), base_type=record.get("base_type")
             )
@@ -232,13 +257,18 @@ class CloudLink:
                 _LOGGER.exception("state callback failed")
 
     def _delay(self) -> float:
-        fast = time.monotonic() < self._fast_until
+        used = self._used()
+        if used >= self._max_requests and self._request_times:
+            # Budget spent: wait until the oldest request leaves the hour.
+            return max(self._request_times[0] + 3600 - time.monotonic(), self._interval)
+        # Keep the last quarter of the budget for commands and their answers.
+        fast = time.monotonic() < self._fast_until and used < self._max_requests * 0.75
         return self._fast_interval if fast else self._interval
 
     async def _poll_once(self) -> None:
         now = time.monotonic()
         if now - self._status_at >= self._status_interval or self.stats.machine_status != ONLINE:
-            self.stats.requests += 1
+            self._spend()
             self.stats.machine_status = await self._cloud.connection_status(self.dsn)
             self._status_at = now
         if self.stats.machine_status != ONLINE:
@@ -264,7 +294,7 @@ class CloudLink:
                 _LOGGER.debug("cloud poll failed (%s in a row): %s", failures, err)
                 if failures >= FAILURE_LIMIT or self.stats.auth_failed:
                     self._set_state(LinkState.IDLE)
-                delay = min(self._interval * 2 ** (failures - 1), self._max_backoff)
+                delay = min(self._interval * 2 ** min(failures - 1, 16), self._max_backoff)
             else:
                 failures = 0
                 self.stats.last_error = None

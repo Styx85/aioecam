@@ -154,9 +154,7 @@ class AylaCloud:
         data = await self._request("GET", f"/dsns/{dsn}/properties/{name}.json", allow_404=True)
         return (data or {}).get("property", {}).get("value")
 
-    async def read_properties(
-        self, dsn: str, names: list[str] | None
-    ) -> dict[str, dict[str, Any]]:
+    async def read_properties(self, dsn: str, names: list[str] | None) -> dict[str, dict[str, Any]]:
         """Several properties in one request, keyed by name (missing ones left out);
         ``None`` reads all of them.
 

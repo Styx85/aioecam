@@ -430,11 +430,12 @@ class EcamDevice:
         ``0xE1`` means the machine was busy and dropped the request.
         """
         queue: asyncio.Queue[tuple[Frame, str]] = asyncio.Queue()
-        self._responses.append(queue)
         expect = getattr(self.link, "expect_answers", None)
         if expect is not None:
-            # Polling transport: answers may land in any property, look at all.
-            expect(timeout)
+            # Polling transport: answers may land in any property, so note what
+            # the cloud holds now (before listening) and look at all of them after.
+            await expect(timeout)
+        self._responses.append(queue)
         try:
             await self.send(frame, timeout=timeout)
             async with asyncio.timeout(timeout):
