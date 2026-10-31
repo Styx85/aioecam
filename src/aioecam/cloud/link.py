@@ -42,6 +42,14 @@ _LOGGER = logging.getLogger(__name__)
 FAILURE_LIMIT = 3
 ONLINE = "Online"
 
+# Shares of the hourly request budget each kind of request may use. Commands
+# always go out; what they need afterwards (answers, the keep-alive, the
+# connection check) comes before the background poll.
+FAST_SHARE = 0.6  # fast polling after a command
+POLL_SHARE = 0.75  # background property polls
+STATUS_SHARE = 0.85  # connection checks
+REQUEST_SHARE = 1.0  # reads and keep-alives asked for by the caller
+
 
 @dataclass
 class CloudLinkStats:
@@ -157,6 +165,7 @@ class CloudLink:
         there, so this first notes every property's current timestamp; only
         values sent after that are passed on.
         """
+        self._require_budget(REQUEST_SHARE)
         await self._fetch(None, announce_new=False)
         now = time.monotonic()
         self._all_until = max(self._all_until, now + seconds)
@@ -173,8 +182,11 @@ class CloudLink:
         fast_poll: bool = True,
     ) -> None:
         """Create a datapoint in the cloud. ``newline`` is a LAN detail and ignored;
-        ``fast_poll=False`` (keep-alives) does not shorten the poll interval."""
+        ``fast_poll=False`` (keep-alives) does not shorten the poll interval and,
+        unlike a command, needs room in the request budget."""
         self._require_usable()
+        if not fast_poll:
+            self._require_budget(REQUEST_SHARE)
         try:
             async with asyncio.timeout(timeout):
                 self._spend()  # commands always go out; the poll gives way
@@ -183,12 +195,14 @@ class CloudLink:
             raise CommandTimeout(f"cloud did not accept write {name} within {timeout}s") from None
         if fast_poll:
             # Answers and state changes follow within seconds: look sooner.
+            # (A command is never held back by the budget.)
             self._fast_until = max(self._fast_until, time.monotonic() + self._fast_window)
             self._wake.set()
 
     async def read(self, name: str, *, timeout: float = 10.0) -> Datapoint:
         """The cloud's latest value of ``name``; new values also go to subscribers."""
         self._require_usable()
+        self._require_budget(REQUEST_SHARE)
         self.watch(name)
         try:
             async with asyncio.timeout(timeout):
@@ -219,6 +233,20 @@ class CloudLink:
         while self._request_times and self._request_times[0] < cutoff:
             self._request_times.popleft()
         return len(self._request_times)
+
+    def _admit(self, share: float) -> bool:
+        return self._used() < self._max_requests * share
+
+    def _wait_for(self, share: float) -> float:
+        """Seconds until a request of this share fits into the budget again."""
+        excess = self._used() - int(self._max_requests * share)
+        if excess < 0:
+            return 0.0
+        return max(self._request_times[excess] + 3600 - time.monotonic(), 0.0)
+
+    def _require_budget(self, share: float) -> None:
+        if not self._admit(share):
+            raise CommandTimeout("the cloud request budget for this hour is spent")
 
     async def _fetch(
         self, names: list[str] | None, *, announce_new: bool = True
@@ -268,17 +296,15 @@ class CloudLink:
                 _LOGGER.exception("state callback failed")
 
     def _delay(self) -> float:
-        used = self._used()
-        if used >= self._max_requests and self._request_times:
-            # Budget spent: wait until the oldest request leaves the hour.
-            return max(self._request_times[0] + 3600 - time.monotonic(), self._interval)
-        # Keep the last quarter of the budget for commands and their answers.
-        fast = time.monotonic() < self._fast_until and used < self._max_requests * 0.75
-        return self._fast_interval if fast else self._interval
+        fast = time.monotonic() < self._fast_until and self._admit(FAST_SHARE)
+        delay = self._fast_interval if fast else self._interval
+        # Never sooner than the budget allows the next background request.
+        return max(delay, self._wait_for(min(POLL_SHARE, STATUS_SHARE)))
 
     async def _poll_once(self) -> None:
         now = time.monotonic()
-        if now - self._status_at >= self._status_interval or self.stats.machine_status != ONLINE:
+        due = now - self._status_at >= self._status_interval
+        if (due or self.stats.machine_status != ONLINE) and self._admit(STATUS_SHARE):
             self._spend()
             self.stats.machine_status = await self._cloud.connection_status(self.dsn)
             self._status_at = now
@@ -286,7 +312,10 @@ class CloudLink:
             # The cloud would keep serving the last values of an offline machine.
             self._set_state(LinkState.IDLE)
             return
-        await self._fetch(None if now < self._all_until else self._watch)
+        answers = now < self._all_until
+        if not self._admit(REQUEST_SHARE if answers else POLL_SHARE):
+            return  # budget: skip this poll, the state stays as it is
+        await self._fetch(None if answers else self._watch)
         self._set_state(LinkState.ACTIVE)
 
     async def _run(self) -> None:
@@ -308,16 +337,21 @@ class CloudLink:
                 if failures >= FAILURE_LIMIT or self.stats.auth_failed:
                     self._set_state(LinkState.IDLE)
                 delay = min(self._interval * 2 ** min(failures - 1, 16), self._max_backoff)
+                delay = max(delay, self._delay())
             else:
                 failures = 0
                 self.stats.last_error = None
                 self.stats.auth_failed = False
                 self._rejected.clear()
                 self.stats.last_poll = time.time()
-                delay = self._interval if self.state is not LinkState.ACTIVE else self._delay()
+                if self.state is LinkState.ACTIVE:
+                    delay = self._delay()
+                else:
+                    delay = max(self._interval, self._wait_for(STATUS_SHARE))
             self._wake.clear()
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(self._wake.wait(), delay)
-            # A command moved the window forward: honour the fast interval from now.
+            # A command woke us: give the machine a moment before looking; the
+            # poll itself still checks the budget.
             if self._wake.is_set():
-                await asyncio.sleep(min(self._fast_interval, self._delay()))
+                await asyncio.sleep(self._fast_interval)

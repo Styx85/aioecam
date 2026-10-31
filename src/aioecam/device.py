@@ -434,7 +434,11 @@ class EcamDevice:
         if expect is not None:
             # Polling transport: answers may land in any property, so note what
             # the cloud holds now (before listening) and look at all of them after.
-            await expect(timeout)
+            try:
+                async with asyncio.timeout(timeout):
+                    await expect(timeout)
+            except TimeoutError:
+                raise CommandTimeout(f"no answer for {what} within {timeout}s") from None
         self._responses.append(queue)
         try:
             await self.send(frame, timeout=timeout)

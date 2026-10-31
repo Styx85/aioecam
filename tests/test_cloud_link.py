@@ -138,6 +138,34 @@ async def test_request_budget_caps_the_poll(rig: Any) -> None:
     assert fake.property_reads - before <= 3
 
 
+async def test_failing_polls_respect_the_budget(rig: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    ecam, *_ = rig
+    link: CloudLink = ecam.link
+    calls = 0
+
+    async def failing(dsn: str, names: list[str] | None) -> dict[str, dict[str, Any]]:
+        nonlocal calls
+        calls += 1
+        raise CloudError("GET properties -> HTTP 500")
+
+    monkeypatch.setattr(link._cloud, "read_properties", failing)
+    link._max_requests = len(link._request_times) + 4
+    link._fast_until = time.monotonic() + 60
+    link._wake.set()
+    await asyncio.sleep(1.0)
+    assert calls <= 4
+
+
+async def test_reads_refuse_when_the_budget_is_spent(rig: Any) -> None:
+    ecam, *_ = rig
+    link: CloudLink = ecam.link
+    link._max_requests = len(link._request_times)
+    with pytest.raises(CommandTimeout, match="budget"):
+        await ecam.refresh()
+    # A command still goes out.
+    await ecam.send(commands.monitor_request())
+
+
 async def test_keepalive_does_not_start_fast_polling(rig: Any) -> None:
     ecam, _, _, fake = rig
     await ecam.keep_cloud_session()
