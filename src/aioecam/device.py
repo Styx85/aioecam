@@ -154,6 +154,31 @@ def _quiet(link: Link) -> dict[str, Any]:
     return {"newline": False}
 
 
+def _session_id_in(kind: str, value: object) -> bytes | None:
+    """The 4-byte session id carried by an Eletta property value, if any.
+
+    ``data_request``: frame | timestamp | id. ``device_connected``: timestamp | id.
+    ``app_id``: the id as a signed integer.
+    """
+    try:
+        if kind == "app_id":
+            if isinstance(value, bool) or not isinstance(value, (int, str)):
+                return None
+            number = int(value)
+            if not -(2**31) <= number < 2**31:
+                return None
+            return number.to_bytes(4, "big", signed=True)
+        if not isinstance(value, str):
+            return None
+        if kind == "data_request":
+            return decode_value(value).app_id
+        text = value.strip()
+        raw = base64.b64decode(text + "=" * (-len(text) % 4), validate=True)
+        return raw[4:8] if len(raw) >= 8 else None
+    except (ValueError, FrameError):
+        return None
+
+
 class CloudWriter(Protocol):
     """What the wake fallback needs from a cloud client (``AylaCloud`` fits)."""
 
@@ -176,8 +201,12 @@ class EcamDevice:
         self.link = link
         self.profile = profile
         # The Coffee Link app signs Eletta ("striker") requests with its id.
+        # "configured", "app" (adopted from the cloud, see adopt_app_id) or
+        # "default" (a fallback the machine may ignore).
+        self.app_id_source: str | None = "configured" if app_id is not None else None
         if app_id is None and profile.session == "striker":
             app_id = commands.APP_SIGNATURE
+            self.app_id_source = "default"
         self._app_id = app_id
         self._cloud = cloud
         self._session_at = 0.0
@@ -549,9 +578,15 @@ class EcamDevice:
         Reported by sk7n4k3d/delonghi-ha: without it the cloud session ends
         after about 5 minutes and writes are accepted but never reach the
         machine. Eletta: ``app_device_connected`` with the timestamp and the
-        app's id. Machines without that property: a monitor request.
+        app's id (adopted first, see :meth:`adopt_app_id`). Machines without
+        that property: a monitor request.
         """
         if self.profile.session == "striker":
+            if self.app_id_source == "default":
+                try:
+                    await self.adopt_app_id()
+                except EcamError as err:
+                    _LOGGER.debug("could not read the app's session id: %s", err)
             payload = int(time.time()).to_bytes(4, "big") + (self._app_id or b"")
             await self.link.write(
                 self.profile.properties["device_connected"],
@@ -563,6 +598,35 @@ class EcamDevice:
                 self.profile, commands.monitor_request(), app_id=self._app_id
             )
             await self.link.write(write.name, write.value, **_quiet(self.link))
+
+    async def adopt_app_id(self, *, timeout: float = 10.0) -> bytes | None:
+        """Eletta over the cloud: sign requests with the Coffee Link app's id.
+
+        The machine only carries out commands from a session with the id the
+        official app uses with it; others are accepted by the cloud and then
+        ignored. Found by actabi/delonghi_coffeelink (issue #15). The id is in
+        the values the app last wrote (one cloud request). Returns the adopted
+        id, or ``None`` when no value carries one (the current id stays).
+        """
+        read_values = getattr(self.link, "read_values", None)
+        if self.profile.session != "striker" or read_values is None:
+            return None
+        names = {
+            kind: self.profile.properties[kind]
+            for kind in ("data_request", "device_connected", "app_id")
+            if kind in self.profile.properties
+        }
+        values = await read_values(list(names.values()), timeout=timeout)
+        for kind, name in names.items():
+            found = _session_id_in(kind, values.get(name))
+            # Zero means "no session"; the default is our own fallback, not the app's.
+            if found and any(found) and found != commands.APP_SIGNATURE:
+                if found != self._app_id:
+                    _LOGGER.info("using the Coffee Link app's session id from %s", name)
+                self._app_id = found
+                self.app_id_source = "app"
+                return found
+        return None
 
     async def request_monitor(self, *, timeout: float = 3.0) -> MachineState:
         """Ask the machine for a fresh monitor frame (``0D 05 75 0F``) and wait for it.

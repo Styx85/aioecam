@@ -66,8 +66,12 @@ machine's cloud connection and is down while the machine is offline, because
 the cloud keeps serving its last values. Commands reach the machine within
 seconds, state changes within the poll interval. Call
 `EcamDevice.keep_cloud_session()` about every 4 minutes, otherwise the cloud
-stops relaying writes. Status reads through the cloud were verified on the
-ECAM610.75; brewing through the cloud was not.
+stops relaying writes. On an Eletta, the keep-alive first adopts the session
+id the Coffee Link app uses with the machine (`EcamDevice.adopt_app_id()`,
+read from the values the app last wrote): the machine ignores commands from
+a session with any other id. Until the app has been used once, a default id
+is used (`EcamDevice.app_id_source` says which). Status reads through the
+cloud were verified on the ECAM610.75; brewing through the cloud was not.
 
 ## Development
 
@@ -83,7 +87,9 @@ Protocol knowledge builds on [cremalink](https://github.com/miditkl/cremalink)
 (AGPL-3.0) and the public protocol write-ups of the De'Longhi community. The
 cloud mode follows the findings of [delonghi-ha](https://github.com/sk7n4k3d/delonghi-ha)
 by @sk7n4k3d (MIT): the Eletta request signature, the cloud keep-alive and
-the request limit.
+the request limit. That an Eletta only obeys the app's session id was found
+by [delonghi_coffeelink](https://github.com/actabi/delonghi_coffeelink) by
+@actabi.
 Not affiliated with De'Longhi or Ayla Networks.
 
 ## License

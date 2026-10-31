@@ -216,6 +216,19 @@ class CloudLink:
         record = records[name]
         return Datapoint(name=name, value=record.get("value"), base_type=record.get("base_type"))
 
+    async def read_values(self, names: list[str], *, timeout: float = 10.0) -> dict[str, Any]:
+        """The cloud's latest values of ``names`` in one request, without
+        watching them; names the cloud has no value for are left out. An
+        optional read: it leaves the last part of the budget, and at least one
+        request, to keep-alives."""
+        self._require_usable()
+        try:
+            async with asyncio.timeout(timeout):
+                records = await self._fetch(names, share=STATUS_SHARE, announce_new=False, spare=1)
+        except TimeoutError:
+            raise CommandTimeout(f"no values from the cloud within {timeout}s") from None
+        return {name: records[name].get("value") for name in names if name in records}
+
     # --- internals ---------------------------------------------------------
 
     def _require_usable(self) -> None:
@@ -236,8 +249,9 @@ class CloudLink:
             self._request_times.popleft()
         return len(self._request_times)
 
-    def _admit(self, share: float) -> bool:
-        return self._used() < self._max_requests * share
+    def _admit(self, share: float, *, spare: int = 0) -> bool:
+        used = self._used() + spare
+        return used < self._max_requests * share and used < self._max_requests
 
     def _wait_for(self, share: float) -> float:
         """Seconds until a request of this share fits into the budget again."""
@@ -246,18 +260,23 @@ class CloudLink:
             return 0.0
         return max(self._request_times[excess] + 3600 - time.monotonic(), 0.0)
 
-    def _require_budget(self, share: float) -> None:
-        if not self._admit(share):
+    def _require_budget(self, share: float, *, spare: int = 0) -> None:
+        if not self._admit(share, spare=spare):
             raise BudgetSpent("the cloud request budget for this hour is spent")
 
     async def _fetch(
-        self, names: list[str] | None, *, share: float, announce_new: bool = True
+        self,
+        names: list[str] | None,
+        *,
+        share: float,
+        announce_new: bool = True,
+        spare: int = 0,
     ) -> dict[str, dict[str, Any]]:
         # One fetch at a time: a slow older answer must not overtake a newer one.
         # The budget is checked inside the lock, so waiting callers cannot all
         # pass against the same remaining room.
         async with self._fetching:
-            self._require_budget(share)
+            self._require_budget(share, spare=spare)
             self._spend()
             records = await self._cloud.read_properties(self.dsn, names)
             self._deliver(records, announce_new=announce_new)
