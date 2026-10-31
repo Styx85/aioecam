@@ -151,6 +151,21 @@ class AylaCloud:
         data = await self._request("GET", f"/dsns/{dsn}/properties/{name}.json", allow_404=True)
         return (data or {}).get("property", {}).get("value")
 
+    async def read_properties(self, dsn: str, names: list[str]) -> dict[str, dict[str, Any]]:
+        """Several properties in one request, keyed by name (missing ones left out).
+
+        Each entry is the cloud's property record: ``value``, ``base_type`` and
+        ``data_updated_at`` (when the machine last sent it).
+        """
+        query = "&".join(f"names[]={name}" for name in names)
+        data = await self._request("GET", f"/dsns/{dsn}/properties.json?{query}") or []
+        result = {}
+        for entry in data:
+            prop = entry.get("property", entry)
+            if isinstance(prop.get("name"), str):
+                result[prop["name"]] = prop
+        return result
+
     async def write_property(self, dsn: str, name: str, value: str) -> None:
         """Create a datapoint; the cloud forwards it to the machine when it is online."""
         await self._request(

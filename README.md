@@ -6,8 +6,9 @@ Eletta Explore (ECAM452).
 
 - **Local first:** talks to the machine directly over Ayla LAN mode; no add-on,
   no extra server process.
-- **Cloud second:** the De'Longhi/Ayla cloud is only used to fetch the LAN key
-  during onboarding and, optionally, as a fallback for waking the machine.
+- **Cloud second:** the De'Longhi/Ayla cloud fetches the LAN key during
+  onboarding and can step in for waking the machine. Machines without LAN
+  mode run entirely through the cloud with `CloudLink` (slower, see below).
 - **Pure asyncio**, dependencies limited to `aiohttp` and `cryptography`, built
   to be embedded in Home Assistant.
 
@@ -46,6 +47,25 @@ python -m aioecam --device 192.168.1.50 stats       # full A2 table
 The LAN key comes from `~/.config/aioecam.json` (`{"lan_key": "..."}`) or
 `AIOECAM_LAN_KEY`.
 
+### Cloud mode
+
+For machines the cloud gives no LAN key (it reports `lan_enabled: false`
+for some Eletta Explore units), `CloudLink` offers the same interface as
+`LanLink` over the Ayla cloud:
+
+```bash
+python -m aioecam onboard --email you@example.com --save
+python -m aioecam --cloud status
+```
+
+Writes become cloud datapoints; the link polls the machine's properties in
+one request, every 30 s and every 5 s for a minute after a write, to stay
+well below Ayla's limit of roughly 200 requests per hour. Commands reach the
+machine within seconds, state changes within the poll interval. Call
+`EcamDevice.keep_cloud_session()` about every 4 minutes, otherwise the cloud
+stops relaying writes. Status reads through the cloud were verified on the
+ECAM610.75; brewing through the cloud was not.
+
 ## Development
 
 ```bash
@@ -57,7 +77,10 @@ python -m venv .venv
 ## Credits
 
 Protocol knowledge builds on [cremalink](https://github.com/miditkl/cremalink)
-(AGPL-3.0) and the public protocol write-ups of the De'Longhi community.
+(AGPL-3.0) and the public protocol write-ups of the De'Longhi community. The
+cloud mode follows the findings of [delonghi-ha](https://github.com/sk7n4k3d/delonghi-ha)
+by @sk7n4k3d (MIT): the Eletta request signature, the cloud keep-alive and
+the request limit.
 Not affiliated with De'Longhi or Ayla Networks.
 
 ## License

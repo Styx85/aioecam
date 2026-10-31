@@ -70,6 +70,12 @@ def refresh_app_id() -> Frame:
     return Frame(REQUEST, OPCODE_POWER, 0x0F, b"\x03\x02")
 
 
+# Appended after the timestamp to requests for Eletta ("striker") machines,
+# as the Coffee Link app does. From sk7n4k3d/delonghi-ha (MIT), which drives
+# Eletta Explore machines through the cloud with it.
+APP_SIGNATURE = bytes([0x20, 0x40, 0x35, 0xEF])
+
+
 @dataclass(frozen=True, slots=True)
 class PropertyWrite:
     """A string property write, ready for any transport (LAN or cloud)."""

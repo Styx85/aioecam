@@ -25,6 +25,7 @@ from typing import Any
 import aiohttp
 
 from aioecam.cloud.api import AylaCloud
+from aioecam.cloud.link import CloudLink
 from aioecam.cloud.onboarding import onboard
 from aioecam.cloud.region import load_region
 from aioecam.device import TAG_NAMES, EcamDevice
@@ -33,6 +34,7 @@ from aioecam.ecam.monitor import MachineState
 from aioecam.ecam.profile import available_families, load_profile
 from aioecam.ecam.settings import SETTINGS
 from aioecam.exceptions import EcamError
+from aioecam.lan.link import LinkStats
 from aioecam.lan.server import LanServer
 
 DEFAULT_KEY_FILE = Path("~/.config/aioecam.json")
@@ -76,11 +78,9 @@ async def _onboard(args: argparse.Namespace) -> None:
         )
     if not args.save:
         return
-    candidates = [
-        m for m in result.machines if m.lan_key and (not args.dsn or m.device.dsn == args.dsn)
-    ]
+    candidates = [m for m in result.machines if not args.dsn or m.device.dsn == args.dsn]
     if len(candidates) != 1:
-        sys.exit("--save needs exactly one machine with a LAN key; choose one with --dsn")
+        sys.exit("--save needs exactly one machine; choose one with --dsn")
     m = candidates[0]
     _save_private(
         args.key_file,
@@ -94,6 +94,8 @@ async def _onboard(args: argparse.Namespace) -> None:
         },
     )
     print(f"saved to {args.key_file.expanduser()} (mode 600)")
+    if not m.lan_key:
+        print("no LAN key: use --cloud for the other commands")
 
 
 def _describe(ecam: EcamDevice, state: MachineState) -> str:
@@ -107,6 +109,30 @@ def _describe(ecam: EcamDevice, state: MachineState) -> str:
     )
 
 
+async def _run_cloud(args: argparse.Namespace, config: dict[str, Any]) -> None:
+    """Run a command through the Ayla cloud instead of LAN mode."""
+    if not config.get("refresh_token") or not config.get("dsn"):
+        sys.exit("--cloud needs a DSN and a refresh token: run `onboard --save` first")
+    profile = load_profile(args.profile or config.get("profile") or "ecam61x")
+
+    def persist(token: str) -> None:
+        _save_private(args.key_file, {**config, "refresh_token": token})
+
+    async with aiohttp.ClientSession() as http:
+        cloud = AylaCloud(http, load_region("eu"), config["refresh_token"],
+                          on_refresh_token=persist)  # fmt: skip
+        watch = [profile.monitor_property, profile.properties["data_response"]]
+        link = CloudLink(cloud, dsn=config["dsn"], device_ip=config.get("device_ip"), watch=watch)
+        ecam = EcamDevice(link, profile)
+        link.start()
+        try:
+            await link.wait_active(20)
+            await ecam.keep_cloud_session()
+            await _command(args, ecam)
+        finally:
+            await link.close()
+
+
 async def _run(args: argparse.Namespace) -> None:
     if args.command == "onboard":
         await _onboard(args)
@@ -116,6 +142,9 @@ async def _run(args: argparse.Namespace) -> None:
             print(f"{name:<22} {stored.label}")
         return
     config = _config(args.key_file)  # fail before touching the network
+    if args.cloud:
+        await _run_cloud(args, config)
+        return
     device_ip = args.device or config.get("device_ip")
     if not device_ip:
         sys.exit("no machine address: pass --device or run `onboard --save`")
@@ -151,11 +180,12 @@ async def _command(args: argparse.Namespace, ecam: EcamDevice) -> None:
         if args.watch:
             ecam.subscribe(lambda s: print(_describe(ecam, s)))
             await asyncio.sleep(args.watch)
-            s = ecam.link.stats
-            print(
-                f"link: registrations={s.registrations} key_exchanges={s.key_exchanges} "
-                f"liveness_failures={s.liveness_failures} rejected={s.rejected_messages}"
-            )
+            s = getattr(ecam.link, "stats", None)
+            if isinstance(s, LinkStats):
+                print(
+                    f"link: registrations={s.registrations} key_exchanges={s.key_exchanges} "
+                    f"liveness_failures={s.liveness_failures} rejected={s.rejected_messages}"
+                )
     elif cmd == "on":
         print(_describe(ecam, await ecam.power_on()))
         if ecam.cloud_fallbacks:
@@ -209,6 +239,8 @@ def main() -> None:
     p.add_argument("--key-file", type=Path, default=DEFAULT_KEY_FILE)
     p.add_argument("--profile", choices=available_families(), help="default: from the key file")
     p.add_argument("--port", type=int, default=10280, help="local callback port")
+    p.add_argument("--cloud", action="store_true",
+                   help="go through the De'Longhi cloud instead of LAN mode")  # fmt: skip
     p.add_argument("-v", "--verbose", action="store_true")
     sub = p.add_subparsers(dest="command", required=True)
     status = sub.add_parser("status", help="read the machine state")
