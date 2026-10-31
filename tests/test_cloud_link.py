@@ -14,7 +14,7 @@ from aioecam.device import EcamDevice
 from aioecam.ecam import commands
 from aioecam.ecam.profile import load_profile
 from aioecam.ecam.value import decode_value
-from aioecam.exceptions import CommandTimeout
+from aioecam.exceptions import AuthError, CommandTimeout, NotConnected
 from aioecam.lan.link import LinkState
 from tests.fake_cloud import CloudMachine, FakeCloud
 from tests.fake_machine import MONITOR, RESPONSE_PROP, FakeMachine
@@ -79,7 +79,7 @@ async def test_link_goes_down_after_failed_polls_and_recovers(
     real = link._cloud.read_properties
     failing = True
 
-    async def flaky(dsn: str, names: list[str]) -> dict[str, dict[str, Any]]:
+    async def flaky(dsn: str, names: list[str] | None) -> dict[str, dict[str, Any]]:
         if failing:
             raise CloudError("GET properties -> HTTP 500")
         return await real(dsn, names)
@@ -107,6 +107,90 @@ async def test_eletta_writes_carry_the_app_signature(rig: Any) -> None:
     assert decode_value(request).app_id == commands.APP_SIGNATURE
     assert keepalive_name == "app_device_connected"
     assert base64.b64decode(keepalive)[4:] == commands.APP_SIGNATURE
+
+
+async def test_settings_answer_in_its_own_property_arrives(rig: Any) -> None:
+    ecam, *_ = rig
+    # The Soul republishes 0x95 answers into d062_mchn_sett, not data_response.
+    assert await ecam.read_setting("auto_off", timeout=3) == 2
+
+
+async def test_keepalive_does_not_start_fast_polling(rig: Any) -> None:
+    ecam, _, _, fake = rig
+    await ecam.keep_cloud_session()
+    before = fake.property_reads
+    await asyncio.sleep(0.5)
+    assert fake.property_reads - before <= 3  # 0.2 s interval, not 0.05 s
+
+
+async def test_an_old_answer_is_never_passed_on_twice(rig: Any) -> None:
+    ecam, *_ = rig
+    link: CloudLink = ecam.link
+    seen: list[str] = []
+    link.subscribe(lambda p: seen.append(p.value), name="x")
+    link._deliver({"x": {"value": "new", "data_updated_at": "2026-10-31T08:00:02Z"}})
+    link._deliver({"x": {"value": "old", "data_updated_at": "2026-10-31T08:00:01Z"}})
+    link._deliver({"x": {"value": "new", "data_updated_at": "2026-10-31T08:00:02Z"}})
+    assert seen == ["new"]
+
+
+async def test_offline_machine_is_not_available(rig: Any) -> None:
+    ecam, _, _, fake = rig
+    link: CloudLink = ecam.link
+    fake.connection_status[DSN] = "Offline"
+    link._status_at = 0  # check the connection on the next poll
+    link._wake.set()
+    for _ in range(40):
+        if not ecam.available:
+            break
+        await asyncio.sleep(0.05)
+    assert not ecam.available and link.stats.machine_status == "Offline"
+    with pytest.raises(NotConnected, match="Offline"):
+        await ecam.refresh()
+    fake.connection_status[DSN] = "Online"
+    await link.wait_active(2)
+
+
+async def test_rejected_sign_in_is_reported(rig: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    ecam, *_ = rig
+    link: CloudLink = ecam.link
+
+    async def rejected(dsn: str, names: list[str] | None) -> dict[str, dict[str, Any]]:
+        raise AuthError("cloud rejected a fresh access token")
+
+    monkeypatch.setattr(link._cloud, "read_properties", rejected)
+    link._wake.set()
+    for _ in range(40):
+        if link.stats.auth_failed:
+            break
+        await asyncio.sleep(0.05)
+    assert link.stats.auth_failed and link.state is LinkState.IDLE
+
+
+async def test_unexpected_error_does_not_stop_the_poll(
+    rig: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ecam, *_ = rig
+    link: CloudLink = ecam.link
+    real = link._cloud.read_properties
+    calls = 0
+
+    async def broken_once(dsn: str, names: list[str] | None) -> dict[str, dict[str, Any]]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise TypeError("malformed answer")
+        return await real(dsn, names)
+
+    monkeypatch.setattr(link._cloud, "read_properties", broken_once)
+    link._wake.set()
+    for _ in range(40):
+        if calls >= 2 and link.state is LinkState.ACTIVE:
+            break
+        await asyncio.sleep(0.05)
+    assert calls >= 2 and link.state is LinkState.ACTIVE
+    await link.close()
+    assert link.state is LinkState.CLOSED
 
 
 async def test_soul_keepalive_is_a_monitor_request(rig: Any) -> None:

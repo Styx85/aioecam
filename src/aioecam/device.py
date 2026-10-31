@@ -14,7 +14,7 @@ import contextlib
 import logging
 import time
 from collections.abc import Callable
-from typing import Protocol, TypeVar
+from typing import Any, Protocol, TypeVar
 
 from aioecam._util import remover as _remover
 from aioecam.ecam import commands
@@ -145,6 +145,13 @@ def _pushes_monitor(link: Link) -> bool:
     """True for transports that deliver new values by themselves (the cloud
     poll): asking the machine to republish would only cost requests."""
     return bool(getattr(link, "pushes_monitor", False))
+
+
+def _quiet(link: Link) -> dict[str, Any]:
+    """Write options for a keep-alive: no fast polling on a polling transport."""
+    if _pushes_monitor(link):
+        return {"newline": False, "fast_poll": False}
+    return {"newline": False}
 
 
 class CloudWriter(Protocol):
@@ -395,6 +402,8 @@ class EcamDevice:
             self._poller = None
 
     async def _poll(self, awake: float, asleep: float) -> None:
+        if _pushes_monitor(self.link):
+            return  # the transport polls by itself; requests would only cost budget
         while True:
             if self.available:
                 try:
@@ -422,6 +431,10 @@ class EcamDevice:
         """
         queue: asyncio.Queue[tuple[Frame, str]] = asyncio.Queue()
         self._responses.append(queue)
+        expect = getattr(self.link, "expect_answers", None)
+        if expect is not None:
+            # Polling transport: answers may land in any property, look at all.
+            expect(timeout)
         try:
             await self.send(frame, timeout=timeout)
             async with asyncio.timeout(timeout):
@@ -540,10 +553,13 @@ class EcamDevice:
             await self.link.write(
                 self.profile.properties["device_connected"],
                 base64.b64encode(payload).decode("ascii"),
-                newline=False,
+                **_quiet(self.link),
             )
         else:
-            await self.send(commands.monitor_request())
+            write = commands.request_write(
+                self.profile, commands.monitor_request(), app_id=self._app_id
+            )
+            await self.link.write(write.name, write.value, **_quiet(self.link))
 
     async def request_monitor(self, *, timeout: float = 3.0) -> MachineState:
         """Ask the machine for a fresh monitor frame (``0D 05 75 0F``) and wait for it.

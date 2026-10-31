@@ -40,12 +40,12 @@ from aioecam.lan.server import LanServer
 DEFAULT_KEY_FILE = Path("~/.config/aioecam.json")
 
 
-def _config(path: Path) -> dict[str, Any]:
+def _config(path: Path, *, need_lan_key: bool = True) -> dict[str, Any]:
     file = path.expanduser()
     data: dict[str, Any] = json.loads(file.read_text()) if file.exists() else {}
     if key := os.environ.get("AIOECAM_LAN_KEY"):
         data["lan_key"] = key
-    if not isinstance(data.get("lan_key"), str) or not data["lan_key"]:
+    if need_lan_key and (not isinstance(data.get("lan_key"), str) or not data["lan_key"]):
         sys.exit(
             f"no LAN key: run `onboard --save`, set AIOECAM_LAN_KEY or create {file} "
             'with {"lan_key": "..."}'
@@ -141,7 +141,8 @@ async def _run(args: argparse.Namespace) -> None:
         for name, stored in sorted(load_profile(args.profile or "ecam61x").commands.items()):
             print(f"{name:<22} {stored.label}")
         return
-    config = _config(args.key_file)  # fail before touching the network
+    # Fail before touching the network; cloud mode needs no LAN key.
+    config = _config(args.key_file, need_lan_key=not args.cloud)
     if args.cloud:
         await _run_cloud(args, config)
         return
