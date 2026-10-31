@@ -28,7 +28,11 @@ includes other ECAM610/612/613 variants and the Eletta Explore (ECAM452).
 Their coverage is limited to codec, captured-frame and simulated-device tests;
 passing these tests does not confirm that they work on a real machine.
 Model-specific behaviour needs confirmation from owners of those machines.
-Eletta write sessions are not implemented.
+One owner of an Eletta Explore confirmed power on, a coffee and power off
+through the cloud with 0.1.5b1 (default session id,
+[cremaevolution-ha#27](https://github.com/Styx85/cremaevolution-ha/issues/27));
+adopting the app's session id (0.1.6b1) is not confirmed yet. Eletta write
+sessions over LAN are not implemented.
 
 Not every code path has been verified live, even on the ECAM610.75: the final
 recipe-polling fix is covered by simulated-device tests, and whether monitor
@@ -71,7 +75,8 @@ id the Coffee Link app uses with the machine (`EcamDevice.adopt_app_id()`,
 read from the values the app last wrote): the machine ignores commands from
 a session with any other id. Until the app has been used once, a default id
 is used (`EcamDevice.app_id_source` says which). Status reads through the
-cloud were verified on the ECAM610.75; brewing through the cloud was not.
+cloud were verified on the ECAM610.75; power on, brewing and power off
+through the cloud were confirmed by an Eletta Explore owner.
 
 ## Development
 
