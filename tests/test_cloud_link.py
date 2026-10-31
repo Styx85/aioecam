@@ -162,6 +162,21 @@ async def test_eletta_ignores_our_own_default_and_empty_ids(rig: Any) -> None:
     assert eletta.app_id_source == "default"
 
 
+async def test_adopting_leaves_the_keepalive_its_budget(rig: Any) -> None:
+    _, _, module, fake = rig
+    link: CloudLink = rig[0].link
+    eletta = EcamDevice(link, load_profile("ecam45x"))
+    module.properties["app_id"] = "12944929"
+    while len(link._request_times) < 20:
+        link._request_times.append(time.monotonic())
+    link._max_requests = len(link._request_times) + 1  # room for one more request
+    await eletta.keep_cloud_session()
+    # The optional read gave way; the keep-alive went out with the default id.
+    assert fake.datapoints[-1][1] == "app_device_connected"
+    assert base64.b64decode(fake.datapoints[-1][2])[4:] == commands.APP_SIGNATURE
+    assert eletta.app_id_source == "default"
+
+
 async def test_a_configured_app_id_is_kept(rig: Any) -> None:
     _, _, module, fake = rig
     mine = bytes.fromhex("c0ffee11")
