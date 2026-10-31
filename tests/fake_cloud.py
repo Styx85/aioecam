@@ -14,6 +14,42 @@ from aioecam.cloud.region import Region, load_region
 EMAIL, PASSWORD = "user@example.com", "correct horse"
 
 
+class CloudProperties(dict[str, str]):
+    """Property values with the time the machine last sent each one."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.updated_at: dict[str, str] = {}
+        self._clock = itertools.count(1)
+
+    def __setitem__(self, name: str, value: str) -> None:
+        super().__setitem__(name, value)
+        self.updated_at[name] = f"2026-10-31T08:{next(self._clock):05d}Z"
+
+    def record(self, name: str) -> dict[str, Any]:
+        return {"name": name, "base_type": "string", "value": self[name],
+                "data_updated_at": self.updated_at[name]}  # fmt: skip
+
+
+class CloudMachine:
+    """The surface FakeMachine uses from a FakeDevice, backed by the fake cloud:
+    writes arrive as cloud datapoints, pushes just update the cloud's value."""
+
+    def __init__(self, cloud: FakeCloud, dsn: str) -> None:
+        self.properties = cloud.properties.setdefault(dsn, CloudProperties())
+        self.on_write: Callable[[str, str], Awaitable[None]] | None = None
+        self.online = True  # False: the cloud accepts writes but never relays them
+        cloud.on_datapoint = self._relay
+
+    async def push(self, name: str, value: str) -> int:
+        self.properties[name] = value
+        return 200
+
+    async def _relay(self, dsn: str, name: str, value: str) -> None:
+        if self.online and self.on_write:
+            await self.on_write(name, value)
+
+
 class FakeCloud:
     def __init__(self) -> None:
         self.region: Region = load_region("eu")
@@ -21,6 +57,8 @@ class FakeCloud:
         self.lan: dict[str, dict[str, Any]] = {}  # dsn -> lan.json payload
         self.lan_status: dict[str, int] = {}  # dsn -> forced lan.json error status
         self.datapoints: list[tuple[str, str, str]] = []
+        self.properties: dict[str, CloudProperties] = {}  # dsn -> what the machine sent
+        self.property_reads = 0
         self.on_datapoint: Callable[[str, str, str], Awaitable[None]] | None = None
         self.refreshes = 0
         self.revoke_access_once = False
@@ -46,6 +84,8 @@ class FakeCloud:
         r.add_get("/apiv1/devices/{dsn}/lan.json", self._lan)
         r.add_get("/apiv1/devices/{dsn}/connection_config.json", self._not_found)
         r.add_post("/apiv1/dsns/{dsn}/properties/{name}/datapoints.json", self._datapoint)
+        r.add_get("/apiv1/dsns/{dsn}/properties.json", self._read_properties)
+        r.add_get("/apiv1/dsns/{dsn}/properties/{name}.json", self._read_property)
         self._runner = web.AppRunner(app, access_log=None)
         await self._runner.setup()
         site = web.TCPSite(self._runner, "127.0.0.1", 0)
@@ -136,6 +176,24 @@ class FakeCloud:
 
     async def _not_found(self, req: web.Request) -> web.Response:
         return web.Response(status=404)
+
+    async def _read_properties(self, req: web.Request) -> web.Response:
+        if not self._authorized(req):
+            return web.Response(status=401)
+        self.property_reads += 1
+        props = self.properties.get(req.match_info["dsn"], CloudProperties())
+        names = req.query.getall("names[]", [])
+        return web.json_response([{"property": props.record(n)} for n in names if n in props])
+
+    async def _read_property(self, req: web.Request) -> web.Response:
+        if not self._authorized(req):
+            return web.Response(status=401)
+        self.property_reads += 1
+        props = self.properties.get(req.match_info["dsn"], CloudProperties())
+        name = req.match_info["name"]
+        if name not in props:
+            return web.Response(status=404)
+        return web.json_response({"property": props.record(name)})
 
     async def _datapoint(self, req: web.Request) -> web.Response:
         if not self._authorized(req):

@@ -9,6 +9,7 @@ reads. So confirmation polls, and ``start_polling`` keeps ``state`` current
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import logging
 import time
@@ -42,7 +43,7 @@ from aioecam.ecam.statistics import (
 )
 from aioecam.ecam.value import decode_value
 from aioecam.exceptions import CommandRejected, CommandTimeout, EcamError, FrameError
-from aioecam.lan.link import LanLink, LinkState
+from aioecam.lan.link import DatapointCallback, LinkState
 from aioecam.lan.messages import Datapoint
 
 _LOGGER = logging.getLogger(__name__)
@@ -124,6 +125,28 @@ def _newer(state: MachineState, before: MachineState | None) -> bool:
     return state != before
 
 
+class Link(Protocol):
+    """What the device needs from a transport (``LanLink`` and ``CloudLink`` fit)."""
+
+    dsn: str
+    device_ip: str
+    state: LinkState
+
+    def subscribe(
+        self, callback: DatapointCallback, name: str | None = None
+    ) -> Callable[[], None]: ...
+    async def write(
+        self, name: str, value: str, *, timeout: float = 10.0, newline: bool = True
+    ) -> None: ...
+    async def read(self, name: str, *, timeout: float = 10.0) -> Datapoint: ...
+
+
+def _pushes_monitor(link: Link) -> bool:
+    """True for transports that deliver new values by themselves (the cloud
+    poll): asking the machine to republish would only cost requests."""
+    return bool(getattr(link, "pushes_monitor", False))
+
+
 class CloudWriter(Protocol):
     """What the wake fallback needs from a cloud client (``AylaCloud`` fits)."""
 
@@ -136,7 +159,7 @@ ProgressCallback = Callable[[dict[str, int]], None]
 class EcamDevice:
     def __init__(
         self,
-        link: LanLink,
+        link: Link,
         profile: Profile,
         *,
         app_id: bytes | None = None,
@@ -145,6 +168,9 @@ class EcamDevice:
     ) -> None:
         self.link = link
         self.profile = profile
+        # The Coffee Link app signs Eletta ("striker") requests with its id.
+        if app_id is None and profile.session == "striker":
+            app_id = commands.APP_SIGNATURE
         self._app_id = app_id
         self._cloud = cloud
         self._session_at = 0.0
@@ -347,6 +373,8 @@ class EcamDevice:
             try:
                 await asyncio.wait_for(self._changed.wait(), min(self._poll_interval, remaining))
             except TimeoutError:
+                if _pushes_monitor(self.link):
+                    continue  # the transport's own poll brings the next frame
                 # No push: ask for a fresh frame. A plain read is not enough; the
                 # module may keep serving the frame from before the command.
                 with contextlib.suppress(CommandTimeout):
@@ -402,6 +430,8 @@ class EcamDevice:
                         try:
                             answer, name = await asyncio.wait_for(queue.get(), 0.5)
                         except TimeoutError:
+                            if _pushes_monitor(self.link):
+                                continue  # the transport's poll fetches answers
                             # The module can retain an answer without republishing it.
                             # Learn the property from a successful answer, not its value.
                             name = self._answer_properties.get(
@@ -497,6 +527,24 @@ class EcamDevice:
         )
         self._session_at = now
 
+    async def keep_cloud_session(self) -> None:
+        """Keep the cloud relaying commands; call about every 4 minutes.
+
+        Reported by sk7n4k3d/delonghi-ha: without it the cloud session ends
+        after about 5 minutes and writes are accepted but never reach the
+        machine. Eletta: ``app_device_connected`` with the timestamp and the
+        app's id. Machines without that property: a monitor request.
+        """
+        if self.profile.session == "striker":
+            payload = int(time.time()).to_bytes(4, "big") + (self._app_id or b"")
+            await self.link.write(
+                self.profile.properties["device_connected"],
+                base64.b64encode(payload).decode("ascii"),
+                newline=False,
+            )
+        else:
+            await self.send(commands.monitor_request())
+
     async def request_monitor(self, *, timeout: float = 3.0) -> MachineState:
         """Ask the machine for a fresh monitor frame (``0D 05 75 0F``) and wait for it.
 
@@ -510,6 +558,10 @@ class EcamDevice:
         ``no_new_frame``; the module does not always republish an unchanged
         state.
         """
+        if _pushes_monitor(self.link):
+            # Over the cloud the machine publishes changes itself (it is online);
+            # the latest cloud value is as fresh as it gets.
+            return await self.refresh(timeout=max(timeout, 0.5))
         before = self.state
         # One deadline for the whole operation, including the module fetching
         # the request: callers such as wait_for() rely on it being bounded.
