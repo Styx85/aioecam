@@ -31,8 +31,9 @@ Model-specific behaviour needs confirmation from owners of those machines.
 One owner of an Eletta Explore confirmed power on, a coffee and power off
 through the cloud with 0.1.5b1 (default session id,
 [cremaevolution-ha#27](https://github.com/Styx85/cremaevolution-ha/issues/27));
-adopting the app's session id (0.1.6b1) is not confirmed yet. Eletta write
-sessions over LAN are not implemented.
+0.1.6b1 works unchanged on that machine; no other id was found there, so
+adopting the app's session id has not been exercised on hardware yet.
+Eletta write sessions over LAN are not implemented.
 
 Not every code path has been verified live, even on the ECAM610.75: the final
 recipe-polling fix is covered by simulated-device tests, and whether monitor
