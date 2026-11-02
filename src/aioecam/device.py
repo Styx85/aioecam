@@ -32,6 +32,7 @@ from aioecam.ecam.catalog import PassiveCatalog
 from aioecam.ecam.frame import RESPONSE, Frame
 from aioecam.ecam.monitor import MachineState
 from aioecam.ecam.profile import Profile
+from aioecam.ecam.serial import SERIAL_PROPERTY, SerialInfo, parse_serial
 from aioecam.ecam.settings import SETTINGS, Setting
 from aioecam.ecam.statistics import (
     MAX_COUNT,
@@ -212,6 +213,7 @@ class EcamDevice:
         self._session_at = 0.0
         self.catalog = PassiveCatalog()
         self.machine_info: dict[str, str | int] = {}
+        self.serial_info: SerialInfo | None = None
         self.last_datapoint_at: float | None = None
         self.last_monitor_at: float | None = None
         self.monitor_query_started_at: float | None = None
@@ -321,6 +323,13 @@ class EcamDevice:
             return  # e.g. echoes of our own data_request
         for queue in self._responses:
             queue.put_nowait((frame, point.name))
+
+    async def read_serial(self, *, timeout: float = 10.0) -> SerialInfo | None:
+        """Product code and production date; ``None`` if the format is unknown.
+        A plain property read, also works in standby."""
+        point = await self.link.read(SERIAL_PROPERTY, timeout=timeout)
+        self.serial_info = parse_serial(point.value)
+        return self.serial_info
 
     # --- commands ------------------------------------------------------------
 
