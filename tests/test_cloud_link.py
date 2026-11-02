@@ -208,6 +208,16 @@ async def test_soul_has_no_app_id_to_adopt(rig: Any) -> None:
     assert fake.property_reads <= reads + 1  # at most the link's own poll
 
 
+async def test_read_serial_through_the_cloud(rig: Any) -> None:
+    ecam, _, module, _ = rig
+    module.properties["d270_serialnumber"] = encode_value(
+        Frame(RESPONSE, 0xA1, 0x0F, b"\x00\x11123456ZZ250701A9876\x00"), timestamp=1
+    )
+    info = await ecam.read_serial(timeout=3)
+    assert info is not None and info.sku == "123456" and ecam.serial_info == info
+    assert str(info.production_date) == "2025-07-01"
+
+
 async def test_settings_answer_in_its_own_property_arrives(rig: Any) -> None:
     ecam, *_ = rig
     # The Soul republishes 0x95 answers into d062_mchn_sett, not data_response.
