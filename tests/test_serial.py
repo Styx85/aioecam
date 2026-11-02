@@ -27,6 +27,9 @@ def test_parses_and_keeps_only_what_does_not_identify_the_machine() -> None:
         42,
         "ECAM61075MB12345",
         "not base64!",
+        "äöü",
+        "",
+        base64.b64encode(Frame(RESPONSE, 0xA1, 0x0F, b"\x00").encode()).decode(),  # short
         value(b"123456ZZ251301A9876\x00"),  # month 13
         value(b"123456ZZ250231A9876\x00"),  # 31 February
         value(b"123456ZZ250701A98"),  # too short
