@@ -25,6 +25,7 @@ from typing import Any
 import aiohttp
 
 from aioecam.cloud.api import AylaCloud
+from aioecam.cloud.auth import LoginFlow
 from aioecam.cloud.link import CloudLink
 from aioecam.cloud.onboarding import onboard
 from aioecam.cloud.region import load_region
@@ -66,7 +67,13 @@ def _save_private(path: Path, data: dict[str, Any]) -> None:
 async def _onboard(args: argparse.Namespace) -> None:
     password = getpass.getpass(f"Coffee Link password for {args.email}: ")
     async with aiohttp.ClientSession() as http:
-        result = await onboard(http, args.email, password)
+        choices: dict[str, tuple[LoginFlow, ...]] = {
+            "auto": ("web", "mobile"),
+            "web": ("web",),
+            "mobile": ("mobile",),
+        }
+        flows = choices[args.login]
+        result = await onboard(http, args.email, password, flows=flows)
     if not result.machines:
         sys.exit("no coffee machines on this account")
     for m in result.machines:
@@ -274,6 +281,12 @@ def main() -> None:
     ob.add_argument("--email", required=True)
     ob.add_argument("--save", action="store_true", help="store key, IP and token in --key-file")
     ob.add_argument("--dsn", help="which machine to save if the account has several")
+    ob.add_argument(
+        "--login",
+        choices=("auto", "web", "mobile"),
+        default="auto",
+        help="sign-in flow; auto tries the web login, then the mobile one",
+    )
     args = p.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.WARNING)
     try:

@@ -17,6 +17,8 @@ class Region:
     gigya_sdk_build: str
     ayla_app_id: str
     ayla_app_secret: str
+    ayla_mobile_app_id: str
+    ayla_mobile_app_secret: str
     fidm_url: str
     socialize_url: str
     accounts_url: str

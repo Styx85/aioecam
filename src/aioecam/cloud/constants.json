@@ -1,5 +1,5 @@
 {
-  "_note": "Public constants of the De'Longhi Coffee Link app (identical for every user, useless without account credentials). Taken from cremalink (AGPL-3.0) resources/api_config.json.",
+  "_note": "Public constants of the De'Longhi Coffee Link app (identical for every user, useless without account credentials). Taken from cremalink (AGPL-3.0) resources/api_config.json. The mobile_* pair (Coffee Link app 4.9.6, used by the mobile sign-in) is taken from actabi/delonghi_coffeelink (MIT).",
   "regions": {
     "eu": {
       "gigya_api_key": "3_e5qn7USZK-QtsIso1wCelqUKAK_IVEsYshRIssQ-X-k55haiZXmKWDHDRul2e5Y2",
@@ -13,7 +13,9 @@
       "accounts_url": "https://accounts.eu1.gigya.com",
       "consent_url": "https://aylaopenid.delonghigroup.com",
       "ayla_user_url": "https://user-field-eu.aylanetworks.com",
-      "ayla_ads_url": "https://ads-eu.aylanetworks.com"
+      "ayla_ads_url": "https://ads-eu.aylanetworks.com",
+      "ayla_mobile_app_id": "DLonghiCoffeeIdKit-sQ-id",
+      "ayla_mobile_app_secret": "DLonghiCoffeeIdKit-HT6b0VNd4y6CSha9ivM5k8navLw"
     }
   },
   "user_agents": {

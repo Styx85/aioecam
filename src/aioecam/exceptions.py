@@ -22,4 +22,12 @@ class CommandRejected(EcamError):
 
 
 class AuthError(EcamError):
-    """Cloud credentials or tokens were rejected."""
+    """Cloud credentials or tokens were rejected.
+
+    ``gigya_code`` is the account service's error code when it answered the
+    sign-in itself (403042: wrong email or password), otherwise ``None``.
+    """
+
+    def __init__(self, message: str, *, gigya_code: int | None = None) -> None:
+        super().__init__(message)
+        self.gigya_code = gigya_code

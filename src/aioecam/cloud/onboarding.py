@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import aiohttp
 
 from aioecam.cloud.api import AylaCloud, CloudDevice, CloudError
-from aioecam.cloud.auth import login
+from aioecam.cloud.auth import LoginFlow, sign_in
 from aioecam.cloud.region import Region, load_region
 from aioecam.ecam.profile import profile_for_oem_model
 
@@ -44,10 +45,11 @@ async def onboard(
     password: str,
     *,
     region: Region | None = None,
+    flows: Sequence[LoginFlow] = ("web", "mobile"),
 ) -> Onboarding:
     """Log in, list the coffee machines and fetch their LAN keys and profiles."""
     reg = region or load_region("eu")
-    refresh_token = await login(http, reg, email, password)
+    refresh_token = await sign_in(http, reg, email, password, flows=flows)
     cloud = AylaCloud(http, reg, refresh_token)
     machines = []
     for device in await cloud.devices():

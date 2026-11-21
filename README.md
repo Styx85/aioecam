@@ -63,6 +63,10 @@ python -m aioecam onboard --email you@example.com --save
 python -m aioecam --cloud status
 ```
 
+Sign-in tries the Coffee Link web login first and, if that fails for any
+reason other than a wrong email or password, the login of the current Coffee
+Link app (Gigya mobile login and JWT). `onboard --login web|mobile` forces one.
+
 Writes become cloud datapoints; the link polls the machine's properties in
 one request, every 30 s and every 5 s for a minute after a command. A budget
 of 180 requests per hour (Ayla allows roughly 200) is enforced per kind of
@@ -95,7 +99,7 @@ cloud mode follows the findings of [delonghi-ha](https://github.com/sk7n4k3d/del
 by @sk7n4k3d (MIT): the Eletta request signature, the cloud keep-alive and
 the request limit. That an Eletta only obeys the app's session id was found
 by [delonghi_coffeelink](https://github.com/actabi/delonghi_coffeelink) by
-@actabi.
+@actabi (MIT), whose mobile sign-in and Ayla app id the fallback login uses.
 Not affiliated with De'Longhi or Ayla Networks.
 
 ## License
