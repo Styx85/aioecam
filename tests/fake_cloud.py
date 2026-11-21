@@ -66,7 +66,8 @@ class FakeCloud:
         self.connection_status: dict[str, str] = {}  # dsn -> e.g. "Offline"
         self.on_datapoint: Callable[[str, str, str], Awaitable[None]] | None = None
         self.refreshes = 0
-        self.web_consent_broken = False  # the consent page lost its signature
+        # True: the consent page lost its signature; "unreachable": connection drops
+        self.web_consent_broken: bool | str = False
         self.jwt_error: int | None = None  # Gigya error code for accounts.getJWT
         self.logins: list[str] = []  # targetEnv of each accounts.login
         self.signed_in_with: list[str] = []  # Ayla app id of each token_sign_in
@@ -152,7 +153,10 @@ class FakeCloud:
     async def _consent(self, req: web.Request) -> web.Response:
         assert req.query["context"] == "ctx-1" and req.query["UID"] == "uid"
         html = "<script>const consentObj2Sig = 'consent-sig';</script>"
-        if self.web_consent_broken:
+        if self.web_consent_broken == "unreachable":
+            assert req.transport is not None
+            req.transport.close()
+        elif self.web_consent_broken:
             html = "<html>new layout</html>"
         return web.Response(text=html, content_type="text/html")
 

@@ -281,11 +281,13 @@ async def sign_in(
     """Try the login flows in order; returns the first Ayla refresh token.
 
     A wrong email or password ends it at once: another flow would fail the
-    same way and only count as one more failed attempt on the account.
+    same way and only count as one more failed attempt on the account. A
+    connection problem moves on too, since the flows use partly different
+    hosts. The last flow's error is raised.
     """
     if not flows:
         raise ValueError("no login flow given")
-    error: AuthError | None = None
+    error: Exception | None = None
     for flow in flows:
         try:
             if flow == "web":
@@ -295,6 +297,9 @@ async def sign_in(
             if err.gigya_code == WRONG_CREDENTIALS:
                 raise
             _LOGGER.debug("%s login failed: %s", flow, err)
+            error = err
+        except (aiohttp.ClientError, TimeoutError) as err:
+            _LOGGER.debug("%s login failed: %s", flow, type(err).__name__)
             error = err
     assert error is not None
     raise error

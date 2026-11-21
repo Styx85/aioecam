@@ -90,6 +90,15 @@ async def test_sign_in_falls_back_to_the_mobile_login(
     assert fake.signed_in_with == [region.ayla_mobile_app_id]
 
 
+async def test_sign_in_falls_back_when_the_web_login_is_unreachable(
+    cloud: tuple[FakeCloud, Region, aiohttp.ClientSession],
+) -> None:
+    fake, region, http = cloud
+    fake.web_consent_broken = "unreachable"
+    assert await sign_in(http, region, EMAIL, PASSWORD) == "refresh-0"
+    assert fake.logins == ["jssdk", "mobile"]
+
+
 async def test_sign_in_stops_at_a_wrong_password(
     cloud: tuple[FakeCloud, Region, aiohttp.ClientSession],
 ) -> None:
