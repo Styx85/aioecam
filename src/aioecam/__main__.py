@@ -25,7 +25,7 @@ from typing import Any
 import aiohttp
 
 from aioecam.cloud.api import AylaCloud
-from aioecam.cloud.auth import LoginFlow
+from aioecam.cloud.auth import DEFAULT_FLOWS, LoginFlow
 from aioecam.cloud.link import CloudLink
 from aioecam.cloud.onboarding import onboard
 from aioecam.cloud.region import load_region
@@ -68,7 +68,7 @@ async def _onboard(args: argparse.Namespace) -> None:
     password = getpass.getpass(f"Coffee Link password for {args.email}: ")
     async with aiohttp.ClientSession() as http:
         choices: dict[str, tuple[LoginFlow, ...]] = {
-            "auto": ("web", "mobile"),
+            "auto": DEFAULT_FLOWS,
             "web": ("web",),
             "mobile": ("mobile",),
         }
@@ -285,7 +285,7 @@ def main() -> None:
         "--login",
         choices=("auto", "web", "mobile"),
         default="auto",
-        help="sign-in flow; auto tries the web login, then the mobile one",
+        help="sign-in flow; auto tries the mobile login, then the web one",
     )
     args = p.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.WARNING)

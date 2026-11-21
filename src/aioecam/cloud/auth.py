@@ -9,8 +9,8 @@ Two ways to an Ayla refresh token:
   login, a signed ``accounts.getJWT`` and Ayla's ``token_sign_in`` with the
   app's own Ayla app id. Taken from actabi/delonghi_coffeelink (MIT).
 
-``sign_in`` tries them in order. Failures raise ``AuthError`` naming the step.
-Credentials and tokens are never logged.
+``sign_in`` tries the mobile login first, then the web login. Failures raise
+``AuthError`` naming the step. Credentials and tokens are never logged.
 """
 
 from __future__ import annotations
@@ -38,6 +38,10 @@ _PAGE_URL = "https://aylaopenid.delonghigroup.com/"
 WRONG_CREDENTIALS = 403042  # Gigya: invalid login ID or password
 
 LoginFlow = Literal["web", "mobile"]
+# The app's own login first: fewer steps, no scraped page. The web login is
+# the fallback. Measured on an ECAM610.75 account: a mobile-login token reads
+# the LAN key too.
+DEFAULT_FLOWS: tuple[LoginFlow, ...] = ("mobile", "web")
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -276,7 +280,7 @@ async def sign_in(
     email: str,
     password: str,
     *,
-    flows: Sequence[LoginFlow] = ("web", "mobile"),
+    flows: Sequence[LoginFlow] = DEFAULT_FLOWS,
 ) -> str:
     """Try the login flows in order; returns the first Ayla refresh token.
 

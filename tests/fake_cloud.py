@@ -69,6 +69,7 @@ class FakeCloud:
         # True: the consent page lost its signature; "unreachable": connection drops
         self.web_consent_broken: bool | str = False
         self.jwt_error: int | None = None  # Gigya error code for accounts.getJWT
+        self.jwt_unreachable = False  # accounts.getJWT drops the connection
         self.logins: list[str] = []  # targetEnv of each accounts.login
         self.signed_in_with: list[str] = []  # Ayla app id of each token_sign_in
         self.revoke_access_once = False
@@ -140,6 +141,9 @@ class FakeCloud:
         expected = base64.b64encode(
             hmac.new(base64.b64decode(SESSION_SECRET), base.encode(), hashlib.sha1).digest()
         ).decode()
+        if self.jwt_unreachable:
+            assert req.transport is not None
+            req.transport.close()
         if self.jwt_error is not None:
             return web.json_response({"errorCode": self.jwt_error, "errorMessage": "refused"})
         if form["oauth_token"] != "st-1" or sig != expected:

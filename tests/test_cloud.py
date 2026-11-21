@@ -71,31 +71,40 @@ async def test_mobile_wrong_password(
     assert "wrong" not in str(err.value) and EMAIL not in str(err.value)
 
 
-async def test_sign_in_uses_the_web_login_first(
+async def test_sign_in_uses_the_mobile_login_first(
     cloud: tuple[FakeCloud, Region, aiohttp.ClientSession],
 ) -> None:
     fake, region, http = cloud
     assert await sign_in(http, region, EMAIL, PASSWORD) == "refresh-0"
-    assert fake.logins == ["jssdk"]
-    assert fake.signed_in_with == [region.ayla_app_id]
-
-
-async def test_sign_in_falls_back_to_the_mobile_login(
-    cloud: tuple[FakeCloud, Region, aiohttp.ClientSession],
-) -> None:
-    fake, region, http = cloud
-    fake.web_consent_broken = True
-    assert await sign_in(http, region, EMAIL, PASSWORD) == "refresh-0"
-    assert fake.logins == ["jssdk", "mobile"]
+    assert fake.logins == ["mobile"]
     assert fake.signed_in_with == [region.ayla_mobile_app_id]
 
 
-async def test_sign_in_falls_back_when_the_web_login_is_unreachable(
+async def test_sign_in_falls_back_to_the_web_login(
+    cloud: tuple[FakeCloud, Region, aiohttp.ClientSession],
+) -> None:
+    fake, region, http = cloud
+    fake.jwt_error = 403003
+    assert await sign_in(http, region, EMAIL, PASSWORD) == "refresh-0"
+    assert fake.logins == ["mobile", "jssdk"]
+    assert fake.signed_in_with == [region.ayla_app_id]
+
+
+async def test_sign_in_falls_back_when_the_mobile_login_is_unreachable(
+    cloud: tuple[FakeCloud, Region, aiohttp.ClientSession],
+) -> None:
+    fake, region, http = cloud
+    fake.jwt_unreachable = True
+    assert await sign_in(http, region, EMAIL, PASSWORD) == "refresh-0"
+    assert fake.logins == ["mobile", "jssdk"]
+
+
+async def test_web_first_falls_back_to_mobile(
     cloud: tuple[FakeCloud, Region, aiohttp.ClientSession],
 ) -> None:
     fake, region, http = cloud
     fake.web_consent_broken = "unreachable"
-    assert await sign_in(http, region, EMAIL, PASSWORD) == "refresh-0"
+    assert await sign_in(http, region, EMAIL, PASSWORD, flows=("web", "mobile")) == "refresh-0"
     assert fake.logins == ["jssdk", "mobile"]
 
 
@@ -106,27 +115,18 @@ async def test_sign_in_stops_at_a_wrong_password(
     with pytest.raises(AuthError) as err:
         await sign_in(http, region, EMAIL, "wrong")
     assert err.value.gigya_code == 403042
-    assert fake.logins == ["jssdk"]  # no second failed attempt on the account
+    assert fake.logins == ["mobile"]  # no second failed attempt on the account
 
 
 async def test_sign_in_reports_the_last_failure(
     cloud: tuple[FakeCloud, Region, aiohttp.ClientSession],
 ) -> None:
     fake, region, http = cloud
-    fake.web_consent_broken = True
     fake.jwt_error = 403003
-    with pytest.raises(AuthError, match="getJWT") as err:
+    fake.web_consent_broken = True
+    with pytest.raises(AuthError, match="consent"):
         await sign_in(http, region, EMAIL, PASSWORD)
-    assert err.value.gigya_code == 403003
-    assert fake.logins == ["jssdk", "mobile"]
-
-
-async def test_mobile_first_when_asked(
-    cloud: tuple[FakeCloud, Region, aiohttp.ClientSession],
-) -> None:
-    fake, region, http = cloud
-    assert await sign_in(http, region, EMAIL, PASSWORD, flows=("mobile", "web")) == "refresh-0"
-    assert fake.logins == ["mobile"]
+    assert fake.logins == ["mobile", "jssdk"]
 
 
 async def test_sign_in_needs_a_flow(

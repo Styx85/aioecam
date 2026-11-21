@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import aiohttp
 
 from aioecam.cloud.api import AylaCloud, CloudDevice, CloudError
-from aioecam.cloud.auth import LoginFlow, sign_in
+from aioecam.cloud.auth import DEFAULT_FLOWS, LoginFlow, sign_in
 from aioecam.cloud.region import Region, load_region
 from aioecam.ecam.profile import profile_for_oem_model
 
@@ -45,7 +45,7 @@ async def onboard(
     password: str,
     *,
     region: Region | None = None,
-    flows: Sequence[LoginFlow] = ("web", "mobile"),
+    flows: Sequence[LoginFlow] = DEFAULT_FLOWS,
 ) -> Onboarding:
     """Log in, list the coffee machines and fetch their LAN keys and profiles."""
     reg = region or load_region("eu")

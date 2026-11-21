@@ -63,9 +63,9 @@ python -m aioecam onboard --email you@example.com --save
 python -m aioecam --cloud status
 ```
 
-Sign-in tries the Coffee Link web login first and, if that fails for any
-reason other than a wrong email or password, the login of the current Coffee
-Link app (Gigya mobile login and JWT). `onboard --login web|mobile` forces one.
+Sign-in uses the login of the current Coffee Link app (Gigya mobile login and
+JWT) and, if that fails for any reason other than a wrong email or password,
+the older Coffee Link web login. `onboard --login web|mobile` forces one.
 
 Writes become cloud datapoints; the link polls the machine's properties in
 one request, every 30 s and every 5 s for a minute after a command. A budget
