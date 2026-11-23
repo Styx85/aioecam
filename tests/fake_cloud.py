@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import itertools
+import urllib.parse
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -12,6 +15,7 @@ from aiohttp import web
 from aioecam.cloud.region import Region, load_region
 
 EMAIL, PASSWORD = "user@example.com", "correct horse"
+SESSION_SECRET = base64.b64encode(b"gigya-session-secret").decode()
 
 
 class CloudProperties(dict[str, str]):
@@ -62,6 +66,12 @@ class FakeCloud:
         self.connection_status: dict[str, str] = {}  # dsn -> e.g. "Offline"
         self.on_datapoint: Callable[[str, str, str], Awaitable[None]] | None = None
         self.refreshes = 0
+        # True: the consent page lost its signature; "unreachable": connection drops
+        self.web_consent_broken: bool | str = False
+        self.jwt_error: int | None = None  # Gigya error code for accounts.getJWT
+        self.jwt_unreachable = False  # accounts.getJWT drops the connection
+        self.logins: list[str] = []  # targetEnv of each accounts.login
+        self.signed_in_with: list[str] = []  # Ayla app id of each token_sign_in
         self.revoke_access_once = False
         self._tokens = itertools.count(1)
         self._refresh = "refresh-0"
@@ -77,6 +87,7 @@ class FakeCloud:
         r.add_post(f"/oidc/op/v1.0/{key}/token", self._token)
         r.add_get("/socialize.getIDs", self._ids)
         r.add_post("/accounts.login", self._login)
+        r.add_post("/accounts.getJWT", self._get_jwt)
         r.add_post("/socialize.getUserInfo", self._userinfo)
         r.add_get("/OIDCConsentPage.php", self._consent)
         r.add_post("/api/v1/token_sign_in", self._sign_in)
@@ -111,10 +122,33 @@ class FakeCloud:
 
     async def _login(self, req: web.Request) -> web.Response:
         form = await req.post()
+        self.logins.append(str(form["targetEnv"]))
         if form["loginID"] != EMAIL or form["password"] != PASSWORD:
             return web.json_response({"errorCode": 403042, "errorMessage": "Invalid LoginID"})
+        if form["targetEnv"] == "mobile":
+            assert form["apiKey"] == self.region.gigya_api_key
+            return web.json_response({"errorCode": 0, "sessionInfo": {
+                "sessionToken": "st-1", "sessionSecret": SESSION_SECRET}})  # fmt: skip
         assert form["gmid"] == "g1"
         return web.json_response({"sessionInfo": {"login_token": "lt-1"}})
+
+    async def _get_jwt(self, req: web.Request) -> web.Response:
+        form = {k: str(v) for k, v in (await req.post()).items()}
+        sig = form.pop("sig")
+        query = "&".join(f"{k}={urllib.parse.quote(v, safe='')}" for k, v in sorted(form.items()))
+        url = urllib.parse.quote(str(req.url), safe="")
+        base = f"POST&{url}&{urllib.parse.quote(query, safe='')}"
+        expected = base64.b64encode(
+            hmac.new(base64.b64decode(SESSION_SECRET), base.encode(), hashlib.sha1).digest()
+        ).decode()
+        if self.jwt_unreachable:
+            assert req.transport is not None
+            req.transport.close()
+        if self.jwt_error is not None:
+            return web.json_response({"errorCode": self.jwt_error, "errorMessage": "refused"})
+        if form["oauth_token"] != "st-1" or sig != expected:
+            return web.json_response({"errorCode": 403003, "errorMessage": "Invalid signature"})
+        return web.json_response({"errorCode": 0, "id_token": "jwt-1"})
 
     async def _userinfo(self, req: web.Request) -> web.Response:
         assert (await req.post())["login_token"] == "lt-1"
@@ -123,6 +157,11 @@ class FakeCloud:
     async def _consent(self, req: web.Request) -> web.Response:
         assert req.query["context"] == "ctx-1" and req.query["UID"] == "uid"
         html = "<script>const consentObj2Sig = 'consent-sig';</script>"
+        if self.web_consent_broken == "unreachable":
+            assert req.transport is not None
+            req.transport.close()
+        elif self.web_consent_broken:
+            html = "<html>new layout</html>"
         return web.Response(text=html, content_type="text/html")
 
     async def _continue(self, req: web.Request) -> web.Response:
@@ -141,7 +180,12 @@ class FakeCloud:
 
     async def _sign_in(self, req: web.Request) -> web.Response:
         form = await req.post()
-        assert form["app_id"] == self.region.ayla_app_id and form["token"] == "idp-1"
+        self.signed_in_with.append(str(form["app_id"]))
+        if form["app_id"] == self.region.ayla_mobile_app_id:
+            assert form["app_secret"] == self.region.ayla_mobile_app_secret
+            assert form["token"] == "jwt-1"
+        else:
+            assert form["app_id"] == self.region.ayla_app_id and form["token"] == "idp-1"
         return web.json_response({"refresh_token": self._refresh})
 
     async def _refresh_token(self, req: web.Request) -> web.Response:

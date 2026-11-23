@@ -1,21 +1,30 @@
-"""De'Longhi account login (Gigya OIDC) and Ayla tokens.
+"""De'Longhi account login (Gigya) and Ayla tokens.
 
-``login`` walks the same eight steps as the Coffee Link app's web login and
-ends with an Ayla refresh token. Ported from cremalink's ``authenticate_cloud``.
-Step 5 reads a signature out of an HTML consent page, so this is the most
-fragile part of the library; failures raise ``AuthError`` naming the step.
+Two ways to an Ayla refresh token:
 
-Credentials and tokens are never logged.
+- ``login`` walks the eight steps of the Coffee Link web login (Gigya OIDC).
+  Ported from cremalink's ``authenticate_cloud``. Step 5 reads a signature out
+  of an HTML consent page, so it is the most fragile part of the library.
+- ``login_mobile`` does what the current Coffee Link app does: a Gigya mobile
+  login, a signed ``accounts.getJWT`` and Ayla's ``token_sign_in`` with the
+  app's own Ayla app id. Taken from actabi/delonghi_coffeelink (MIT).
+
+``sign_in`` tries the mobile login first, then the web login. Failures raise
+``AuthError`` naming the step. Credentials and tokens are never logged.
 """
 
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import json
+import logging
 import time
 import urllib.parse
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 import aiohttp
 
@@ -25,6 +34,16 @@ from aioecam.exceptions import AuthError, EcamError
 _SCOPE = "openid email profile UID comfort en alexa"
 _REDIRECT = "https://google.it"
 _PAGE_URL = "https://aylaopenid.delonghigroup.com/"
+
+WRONG_CREDENTIALS = 403042  # Gigya: invalid login ID or password
+
+LoginFlow = Literal["web", "mobile"]
+# The app's own login first: fewer steps, no scraped page. The web login is
+# the fallback. Measured on an ECAM610.75 account: a mobile-login token reads
+# the LAN key too.
+DEFAULT_FLOWS: tuple[LoginFlow, ...] = ("mobile", "web")
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -39,6 +58,12 @@ class Tokens:
 
 def _query(url: str, name: str) -> str | None:
     return urllib.parse.parse_qs(urllib.parse.urlparse(url).query).get(name, [None])[0]
+
+
+def _gigya_code(data: dict[str, Any]) -> int | None:
+    """Gigya's error code as an int; anything else is not echoed."""
+    code = data.get("errorCode")
+    return code if isinstance(code, int) and not isinstance(code, bool) else None
 
 
 async def _json(resp: aiohttp.ClientResponse, step: str) -> dict[str, Any]:
@@ -108,7 +133,11 @@ async def login(
     session = account.get("sessionInfo")
     if not isinstance(session, dict) or "login_token" not in session:
         # Gigya reports e.g. errorCode 403042 for wrong credentials; never echo the payload.
-        raise AuthError(f"login rejected (Gigya error {account.get('errorCode', 'unknown')})")
+        gigya = _gigya_code(account)
+        raise AuthError(
+            f"login rejected (Gigya error {gigya if gigya is not None else 'unknown'})",
+            gigya_code=gigya,
+        )
     login_token = session["login_token"]
 
     # 4. user info -> signed UID
@@ -178,6 +207,106 @@ async def login(
     if not isinstance(refresh, str) or not refresh:
         raise AuthError("login step 8 (token_sign_in): no refresh token")
     return refresh
+
+
+def _gigya_signature(secret: str, url: str, params: dict[str, str]) -> str:
+    """OAuth 1 style HMAC-SHA1 request signature with the Gigya session secret."""
+    query = "&".join(f"{k}={urllib.parse.quote(v, safe='')}" for k, v in sorted(params.items()))
+    base = f"POST&{urllib.parse.quote(url, safe='')}&{urllib.parse.quote(query, safe='')}"
+    digest = hmac.new(base64.b64decode(secret), base.encode(), hashlib.sha1).digest()
+    return base64.b64encode(digest).decode()
+
+
+async def login_mobile(
+    http: aiohttp.ClientSession, region: Region, email: str, password: str
+) -> str:
+    """Sign in like the Coffee Link app; returns an Ayla refresh token."""
+    key = region.gigya_api_key
+
+    # 1. account login -> session token and secret
+    async with http.post(
+        f"{region.accounts_url}/accounts.login",
+        data={"apiKey": key, "loginID": email, "password": password, "format": "json",
+              "targetEnv": "mobile"},
+    ) as resp:  # fmt: skip
+        account = await _json(resp, "mobile 1 (login)")
+    code = _gigya_code(account)
+    session = account.get("sessionInfo")
+    if code != 0 or not isinstance(session, dict):
+        raise AuthError(
+            f"mobile login rejected (Gigya error {code if code is not None else 'unknown'})",
+            gigya_code=code,
+        )
+    token, secret = session.get("sessionToken"), session.get("sessionSecret")
+    if not isinstance(token, str) or not isinstance(secret, str):
+        raise AuthError("mobile login step 1 (login): no session")
+
+    # 2. signed request -> JWT
+    url = f"{region.accounts_url}/accounts.getJWT"
+    timestamp = str(int(time.time()))
+    params = {"apiKey": key, "oauth_token": token, "format": "json",
+              "timestamp": timestamp, "nonce": f"{timestamp}_1"}  # fmt: skip
+    try:
+        params["sig"] = _gigya_signature(secret, url, params)
+    except ValueError:
+        raise AuthError("mobile login step 2 (getJWT): unusable session secret") from None
+    async with http.post(url, data=params) as resp:
+        jwt = await _json(resp, "mobile 2 (getJWT)")
+    id_token = jwt.get("id_token")
+    if _gigya_code(jwt) != 0 or not isinstance(id_token, str):
+        code = _gigya_code(jwt)
+        raise AuthError(
+            f"mobile login step 2 (getJWT): Gigya error {code if code is not None else 'unknown'}",
+            gigya_code=code,
+        )
+
+    # 3. JWT -> Ayla refresh token
+    async with http.post(
+        f"{region.ayla_user_url}/api/v1/token_sign_in",
+        headers={"User-Agent": region.token_agent},
+        data={"app_id": region.ayla_mobile_app_id, "app_secret": region.ayla_mobile_app_secret,
+              "token": id_token},
+    ) as resp:  # fmt: skip
+        ayla = await _json(resp, "mobile 3 (token_sign_in)")
+    refresh: Any = ayla.get("refresh_token")
+    if not isinstance(refresh, str) or not refresh:
+        raise AuthError("mobile login step 3 (token_sign_in): no refresh token")
+    return refresh
+
+
+async def sign_in(
+    http: aiohttp.ClientSession,
+    region: Region,
+    email: str,
+    password: str,
+    *,
+    flows: Sequence[LoginFlow] = DEFAULT_FLOWS,
+) -> str:
+    """Try the login flows in order; returns the first Ayla refresh token.
+
+    A wrong email or password ends it at once: another flow would fail the
+    same way and only count as one more failed attempt on the account. A
+    connection problem moves on too, since the flows use partly different
+    hosts. The last flow's error is raised.
+    """
+    if not flows:
+        raise ValueError("no login flow given")
+    error: Exception | None = None
+    for flow in flows:
+        try:
+            if flow == "web":
+                return await login(http, region, email, password)
+            return await login_mobile(http, region, email, password)
+        except AuthError as err:
+            if err.gigya_code == WRONG_CREDENTIALS:
+                raise
+            _LOGGER.debug("%s login failed: %s", flow, err)
+            error = err
+        except (aiohttp.ClientError, TimeoutError) as err:
+            _LOGGER.debug("%s login failed: %s", flow, type(err).__name__)
+            error = err
+    assert error is not None
+    raise error
 
 
 async def refresh_tokens(http: aiohttp.ClientSession, region: Region, refresh_token: str) -> Tokens:

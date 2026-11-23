@@ -6,7 +6,7 @@ import aiohttp
 import pytest
 
 from aioecam.cloud.api import AylaCloud
-from aioecam.cloud.auth import login
+from aioecam.cloud.auth import login, login_mobile, sign_in
 from aioecam.cloud.onboarding import onboard
 from aioecam.cloud.region import Region, load_region
 from aioecam.exceptions import AuthError
@@ -52,6 +52,89 @@ async def test_wrong_password(cloud: tuple[FakeCloud, Region, aiohttp.ClientSess
     with pytest.raises(AuthError, match="403042") as err:
         await login(http, region, EMAIL, "wrong")
     assert "wrong" not in str(err.value) and EMAIL not in str(err.value)
+
+
+async def test_mobile_login(cloud: tuple[FakeCloud, Region, aiohttp.ClientSession]) -> None:
+    fake, region, http = cloud
+    assert await login_mobile(http, region, EMAIL, PASSWORD) == "refresh-0"
+    assert fake.logins == ["mobile"]
+    assert fake.signed_in_with == [region.ayla_mobile_app_id]
+
+
+async def test_mobile_wrong_password(
+    cloud: tuple[FakeCloud, Region, aiohttp.ClientSession],
+) -> None:
+    _, region, http = cloud
+    with pytest.raises(AuthError, match="403042") as err:
+        await login_mobile(http, region, EMAIL, "wrong")
+    assert err.value.gigya_code == 403042
+    assert "wrong" not in str(err.value) and EMAIL not in str(err.value)
+
+
+async def test_sign_in_uses_the_mobile_login_first(
+    cloud: tuple[FakeCloud, Region, aiohttp.ClientSession],
+) -> None:
+    fake, region, http = cloud
+    assert await sign_in(http, region, EMAIL, PASSWORD) == "refresh-0"
+    assert fake.logins == ["mobile"]
+    assert fake.signed_in_with == [region.ayla_mobile_app_id]
+
+
+async def test_sign_in_falls_back_to_the_web_login(
+    cloud: tuple[FakeCloud, Region, aiohttp.ClientSession],
+) -> None:
+    fake, region, http = cloud
+    fake.jwt_error = 403003
+    assert await sign_in(http, region, EMAIL, PASSWORD) == "refresh-0"
+    assert fake.logins == ["mobile", "jssdk"]
+    assert fake.signed_in_with == [region.ayla_app_id]
+
+
+async def test_sign_in_falls_back_when_the_mobile_login_is_unreachable(
+    cloud: tuple[FakeCloud, Region, aiohttp.ClientSession],
+) -> None:
+    fake, region, http = cloud
+    fake.jwt_unreachable = True
+    assert await sign_in(http, region, EMAIL, PASSWORD) == "refresh-0"
+    assert fake.logins == ["mobile", "jssdk"]
+
+
+async def test_web_first_falls_back_to_mobile(
+    cloud: tuple[FakeCloud, Region, aiohttp.ClientSession],
+) -> None:
+    fake, region, http = cloud
+    fake.web_consent_broken = "unreachable"
+    assert await sign_in(http, region, EMAIL, PASSWORD, flows=("web", "mobile")) == "refresh-0"
+    assert fake.logins == ["jssdk", "mobile"]
+
+
+async def test_sign_in_stops_at_a_wrong_password(
+    cloud: tuple[FakeCloud, Region, aiohttp.ClientSession],
+) -> None:
+    fake, region, http = cloud
+    with pytest.raises(AuthError) as err:
+        await sign_in(http, region, EMAIL, "wrong")
+    assert err.value.gigya_code == 403042
+    assert fake.logins == ["mobile"]  # no second failed attempt on the account
+
+
+async def test_sign_in_reports_the_last_failure(
+    cloud: tuple[FakeCloud, Region, aiohttp.ClientSession],
+) -> None:
+    fake, region, http = cloud
+    fake.jwt_error = 403003
+    fake.web_consent_broken = True
+    with pytest.raises(AuthError, match="consent"):
+        await sign_in(http, region, EMAIL, PASSWORD)
+    assert fake.logins == ["mobile", "jssdk"]
+
+
+async def test_sign_in_needs_a_flow(
+    cloud: tuple[FakeCloud, Region, aiohttp.ClientSession],
+) -> None:
+    _, region, http = cloud
+    with pytest.raises(ValueError):
+        await sign_in(http, region, EMAIL, PASSWORD, flows=())
 
 
 async def test_onboarding(cloud: tuple[FakeCloud, Region, aiohttp.ClientSession]) -> None:
@@ -115,3 +198,12 @@ async def test_write_property(cloud: tuple[FakeCloud, Region, aiohttp.ClientSess
     api = AylaCloud(http, region, "refresh-0")
     await api.write_property(SOUL["dsn"], "data_request", "DQeEDwIBVRI=")
     assert fake.datapoints == [(SOUL["dsn"], "data_request", "DQeEDwIBVRI=")]
+
+
+def test_gigya_code_only_accepts_integers() -> None:
+    from aioecam.cloud.auth import _gigya_code
+
+    assert _gigya_code({"errorCode": 403042}) == 403042
+    assert _gigya_code({"errorCode": "user@example.com"}) is None
+    assert _gigya_code({"errorCode": True}) is None
+    assert _gigya_code({}) is None
