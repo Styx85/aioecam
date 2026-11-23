@@ -284,6 +284,22 @@ async def sign_in(
 ) -> str:
     """Try the login flows in order; returns the first Ayla refresh token.
 
+    See :func:`sign_in_with_flow`, which also says which flow worked.
+    """
+    refresh_token, _flow = await sign_in_with_flow(http, region, email, password, flows=flows)
+    return refresh_token
+
+
+async def sign_in_with_flow(
+    http: aiohttp.ClientSession,
+    region: Region,
+    email: str,
+    password: str,
+    *,
+    flows: Sequence[LoginFlow] = DEFAULT_FLOWS,
+) -> tuple[str, LoginFlow]:
+    """Try the login flows in order; returns the refresh token and the flow that worked.
+
     A wrong email or password ends it at once: another flow would fail the
     same way and only count as one more failed attempt on the account. A
     connection problem moves on too, since the flows use partly different
@@ -295,8 +311,11 @@ async def sign_in(
     for flow in flows:
         try:
             if flow == "web":
-                return await login(http, region, email, password)
-            return await login_mobile(http, region, email, password)
+                refresh_token = await login(http, region, email, password)
+            else:
+                refresh_token = await login_mobile(http, region, email, password)
+            _LOGGER.debug("signed in with the %s login", flow)
+            return refresh_token, flow
         except AuthError as err:
             if err.gigya_code == WRONG_CREDENTIALS:
                 raise

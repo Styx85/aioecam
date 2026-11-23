@@ -6,7 +6,7 @@ import aiohttp
 import pytest
 
 from aioecam.cloud.api import AylaCloud
-from aioecam.cloud.auth import login, login_mobile, sign_in
+from aioecam.cloud.auth import login, login_mobile, sign_in, sign_in_with_flow
 from aioecam.cloud.onboarding import onboard
 from aioecam.cloud.region import Region, load_region
 from aioecam.exceptions import AuthError
@@ -85,7 +85,7 @@ async def test_sign_in_falls_back_to_the_web_login(
 ) -> None:
     fake, region, http = cloud
     fake.jwt_error = 403003
-    assert await sign_in(http, region, EMAIL, PASSWORD) == "refresh-0"
+    assert await sign_in_with_flow(http, region, EMAIL, PASSWORD) == ("refresh-0", "web")
     assert fake.logins == ["mobile", "jssdk"]
     assert fake.signed_in_with == [region.ayla_app_id]
 
@@ -104,7 +104,9 @@ async def test_web_first_falls_back_to_mobile(
 ) -> None:
     fake, region, http = cloud
     fake.web_consent_broken = "unreachable"
-    assert await sign_in(http, region, EMAIL, PASSWORD, flows=("web", "mobile")) == "refresh-0"
+    assert await sign_in_with_flow(
+        http, region, EMAIL, PASSWORD, flows=("web", "mobile")
+    ) == ("refresh-0", "mobile")
     assert fake.logins == ["jssdk", "mobile"]
 
 
@@ -142,6 +144,7 @@ async def test_onboarding(cloud: tuple[FakeCloud, Region, aiohttp.ClientSession]
     fake.devices = [SOUL, ELETTA, AIRCON]
     fake.lan[SOUL["dsn"]] = {"lanip": {"lanip_key": "S0ULKEY==", "lanip_key_id": 58915}}
     result = await onboard(http, EMAIL, PASSWORD, region=region)
+    assert result.login_flow == "mobile"
     soul, eletta = result.machines  # the air conditioner is skipped
     assert (soul.profile_family, soul.lan_key, soul.key_id) == ("ecam61x", "S0ULKEY==", 58915)
     assert soul.device.lan_ip == "192.168.1.50"
