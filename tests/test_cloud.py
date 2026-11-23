@@ -104,9 +104,10 @@ async def test_web_first_falls_back_to_mobile(
 ) -> None:
     fake, region, http = cloud
     fake.web_consent_broken = "unreachable"
-    assert await sign_in_with_flow(
-        http, region, EMAIL, PASSWORD, flows=("web", "mobile")
-    ) == ("refresh-0", "mobile")
+    assert await sign_in_with_flow(http, region, EMAIL, PASSWORD, flows=("web", "mobile")) == (
+        "refresh-0",
+        "mobile",
+    )
     assert fake.logins == ["jssdk", "mobile"]
 
 
