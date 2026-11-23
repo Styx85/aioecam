@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import aiohttp
 
 from aioecam.cloud.api import AylaCloud, CloudDevice, CloudError
-from aioecam.cloud.auth import DEFAULT_FLOWS, LoginFlow, sign_in
+from aioecam.cloud.auth import DEFAULT_FLOWS, LoginFlow, sign_in_with_flow
 from aioecam.cloud.region import Region, load_region
 from aioecam.ecam.profile import profile_for_oem_model
 
@@ -34,9 +34,10 @@ class OnboardedMachine:
 class Onboarding:
     refresh_token: str
     machines: list[OnboardedMachine]
+    login_flow: LoginFlow | None = None  # the login that worked ("mobile" or "web")
 
     def __repr__(self) -> str:
-        return f"Onboarding(machines={self.machines!r})"
+        return f"Onboarding(machines={self.machines!r}, login_flow={self.login_flow!r})"
 
 
 async def onboard(
@@ -49,7 +50,7 @@ async def onboard(
 ) -> Onboarding:
     """Log in, list the coffee machines and fetch their LAN keys and profiles."""
     reg = region or load_region("eu")
-    refresh_token = await sign_in(http, reg, email, password, flows=flows)
+    refresh_token, login_flow = await sign_in_with_flow(http, reg, email, password, flows=flows)
     cloud = AylaCloud(http, reg, refresh_token)
     machines = []
     for device in await cloud.devices():
@@ -77,4 +78,4 @@ async def onboard(
                 key_id=lan.key_id if lan else None,
             )
         )
-    return Onboarding(refresh_token=cloud.refresh_token, machines=machines)
+    return Onboarding(refresh_token=cloud.refresh_token, machines=machines, login_flow=login_flow)
